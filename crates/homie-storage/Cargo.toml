@@ -11,6 +11,7 @@ rusqlite.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 time.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

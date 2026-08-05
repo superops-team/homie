@@ -1,6 +1,8 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+use time::OffsetDateTime;
+use uuid::Uuid;
 
 const SCHEMA_VERSION: i64 = 1;
 
@@ -29,6 +31,25 @@ pub struct StorageHealth {
     pub journal_mode: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct CreateSession {
+    pub workspace: PathBuf,
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub workspace: String,
+    pub agent_profile_id: String,
+    pub runtime_id: String,
+    pub llm_profile_id: String,
+    pub permission_profile_id: String,
+}
+
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("I/O error: {0}")]
@@ -37,6 +58,8 @@ pub enum StorageError {
     Sqlite(#[from] rusqlite::Error),
     #[error("database schema version {found} is newer than supported {supported}")]
     SchemaTooNew { found: i64, supported: i64 },
+    #[error("no enabled default agent profile is available")]
+    DefaultAgentProfileUnavailable,
 }
 
 pub fn open_or_create(config: StorageConfig) -> Result<Storage, StorageError> {
@@ -116,6 +139,130 @@ impl Storage {
         })
     }
 
+    pub fn seed_defaults(&self) -> Result<(), StorageError> {
+        let now = now_unix();
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO providers(id, kind, name, base_url, api_key_ref, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                "provider_local_placeholder",
+                "openai_compatible",
+                "Local Placeholder",
+                "http://127.0.0.1:11434/v1",
+                "secret:provider_local_placeholder",
+                now,
+                now
+            ],
+        )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO llm_profiles(id, provider_id, name, default_model, allowed_models_json, params_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                "llm_default",
+                "provider_local_placeholder",
+                "Default Local LLM",
+                "gpt-4o-mini",
+                "[\"gpt-4o-mini\"]",
+                "{}",
+                now,
+                now
+            ],
+        )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO runtime_descriptors(id, kind, display_name, binary, argv_template_json, env_json, env_scrub_json, status_authority, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                "runtime_codex",
+                "codex",
+                "Codex",
+                "codex",
+                "[]",
+                "{}",
+                "[\"OPENAI_API_KEY\", \"ANTHROPIC_API_KEY\", \"AUTHORIZATION\"]",
+                "screen",
+                now,
+                now
+            ],
+        )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO permission_profiles(id, name, filesystem_json, network_json, shell_json, approval_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                "perm_default",
+                "Default Restricted",
+                "{\"mode\":\"workspace\"}",
+                "{\"mode\":\"ask\"}",
+                "{\"mode\":\"ask\"}",
+                "{\"mode\":\"on_request\"}",
+                now,
+                now
+            ],
+        )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO agent_profiles(id, name, runtime_id, llm_profile_id, permission_profile_id, workspace_scope_json, enabled, is_default, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 1, ?7, ?8)",
+            params![
+                "agent_codex_default",
+                "Default Codex",
+                "runtime_codex",
+                "llm_default",
+                "perm_default",
+                "{\"mode\":\"selected_workspace\"}",
+                now,
+                now
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn create_session(&self, request: CreateSession) -> Result<SessionSummary, StorageError> {
+        let Some(profile) = self.default_profile()? else {
+            return Err(StorageError::DefaultAgentProfileUnavailable);
+        };
+        let now = now_unix();
+        let id = Uuid::now_v7().to_string();
+        let title = request
+            .title
+            .unwrap_or_else(|| "Untitled Session".to_string());
+        let workspace = request.workspace.display().to_string();
+        let output_log_path = format!("runtime/output/{id}.log");
+        self.connection.execute(
+            "INSERT INTO sessions(
+                id, agent_profile_id, runtime_id, llm_profile_id, permission_profile_id,
+                effective_config_id, workspace, title, status, output_log_path,
+                output_tail_offset, virtual_key_id, created_at, updated_at, last_seen_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, 'created', ?8, 0, NULL, ?9, ?10, NULL)",
+            params![
+                id,
+                profile.agent_profile_id,
+                profile.runtime_id,
+                profile.llm_profile_id,
+                profile.permission_profile_id,
+                workspace,
+                title,
+                output_log_path,
+                now,
+                now
+            ],
+        )?;
+        self.session_by_id(&id)
+    }
+
+    pub fn list_sessions(&self) -> Result<Vec<SessionSummary>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, title, status, workspace, agent_profile_id, runtime_id, llm_profile_id, permission_profile_id
+             FROM sessions
+             ORDER BY created_at ASC, id ASC",
+        )?;
+        let sessions = statement
+            .query_map([], read_session_summary)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(sessions)
+    }
+
     fn schema_version(&self) -> Result<i64, StorageError> {
         let has_table: Option<i64> = self
             .connection
@@ -139,6 +286,64 @@ impl Storage {
             .unwrap_or(0);
         Ok(version)
     }
+
+    fn default_profile(&self) -> Result<Option<DefaultProfile>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT id, runtime_id, llm_profile_id, permission_profile_id
+                 FROM agent_profiles
+                 WHERE enabled = 1 AND is_default = 1
+                 LIMIT 1",
+                [],
+                |row| {
+                    Ok(DefaultProfile {
+                        agent_profile_id: row.get(0)?,
+                        runtime_id: row.get(1)?,
+                        llm_profile_id: row.get(2)?,
+                        permission_profile_id: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    fn session_by_id(&self, id: &str) -> Result<SessionSummary, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT id, title, status, workspace, agent_profile_id, runtime_id, llm_profile_id, permission_profile_id
+                 FROM sessions
+                 WHERE id = ?1",
+                params![id],
+                read_session_summary,
+            )
+            .map_err(StorageError::from)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DefaultProfile {
+    agent_profile_id: String,
+    runtime_id: String,
+    llm_profile_id: String,
+    permission_profile_id: String,
+}
+
+fn read_session_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
+    Ok(SessionSummary {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        status: row.get(2)?,
+        workspace: row.get(3)?,
+        agent_profile_id: row.get(4)?,
+        runtime_id: row.get(5)?,
+        llm_profile_id: row.get(6)?,
+        permission_profile_id: row.get(7)?,
+    })
+}
+
+fn now_unix() -> i64 {
+    OffsetDateTime::now_utc().unix_timestamp()
 }
 
 const SCHEMA_V1: &str = r#"

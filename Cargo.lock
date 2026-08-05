@@ -271,6 +271,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "time",
+ "uuid",
 ]
 
 [[package]]
