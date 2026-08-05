@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test security smoke package pre-commit full-check
+.PHONY: fmt fmt-check lint test security smoke app package dmg pre-commit full-check
 
 fmt:
 	cargo fmt --all
@@ -22,9 +22,14 @@ smoke:
 	cargo run -q -p homie-cli -- session create --data-dir "$$tmpdir" --workspace "$$(pwd)" --title Smoke --json >/dev/null; \
 	cargo run -q -p homie-cli -- session list --data-dir "$$tmpdir" --json >/dev/null
 
-package:
+app:
 	scripts/package/package.sh
+
+package: app
+
+dmg:
+	scripts/package/dmg.sh
 
 pre-commit: fmt-check lint test security
 
-full-check: pre-commit smoke package
+full-check: pre-commit smoke app

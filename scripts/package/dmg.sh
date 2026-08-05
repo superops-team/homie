@@ -17,4 +17,5 @@ hdiutil create \
   -format UDZO \
   "$dmg_path" >/dev/null
 
-echo "$dmg_path"
+echo "APP_PATH=$stage_dir/Homie.app"
+echo "DMG_PATH=$dmg_path"

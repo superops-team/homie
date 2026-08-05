@@ -52,8 +52,14 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 if command -v codesign >/dev/null 2>&1; then
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -cr "$app_dir" >/dev/null 2>&1 || true
+  fi
+  codesign --force --sign - "$app_dir/Contents/MacOS/Homie" >/dev/null
+  codesign --force --sign - "$app_dir/Contents/Resources/bin/homie" >/dev/null
   codesign --force --deep --sign - "$app_dir" >/dev/null
 fi
 
 tar -czf "$archive" -C "$dist_dir" "homie-$version-$target_triple"
-echo "$archive"
+echo "APP_PATH=$app_dir"
+echo "TARBALL_PATH=$archive"
