@@ -26,11 +26,11 @@ Homie 的目标是构建一个 Rust + GPUI 的高性能跨平台桌面应用，�
 
 - V1 不实现完整多 agent 自动协作。
 - V1 不实现复杂长期记忆检索和语义索引，只提供可扩展的 memory controller 边界。
-- V1 不实现云端同步、多人协作或远端 fleet 管理。
 - V1 不实现完整插件市场或第三方 agent SDK。
 - V1 不追求所有 agent 的深度状态检测一致；先跑通一个真实 agent，并让其他 agent 通过同一 contract 渐进接入。
-- V1 不承诺 runtime 在 app 退出后继续存活；V1 必须持久化 session/context/usage，以便 app 重启后展示历史状态。runtime 独立保活作为 V1.1 目标。
-- V1 不实现 MCP server proxy 执行链路；MCP server 配置和 profile 绑定先入库，实际代理、调用转发和 MCP tool 耗时统计在后续工作补充开发。
+- V1.0 不承诺 runtime 在 app 退出后继续存活；V1.0 必须持久化 session/context/usage，以便 app 重启后展示历史状态。runtime 独立保活作为 V1.1 目标。
+- V1.0 不实现 MCP server proxy 执行链路；MCP server 配置和 profile 绑定先入库，实际代理、调用转发和 MCP tool 耗时统计在后续工作补充开发。
+- 远端执行主机、节点账户、跨机器 handoff/fork 属于 V1.x 阶段，不进入 V1.0 最小闭环，但属于第一个产品版本路线图。
 
 ## 2. 用户场景
 
@@ -735,6 +735,126 @@ homie llm proxy-status
 
 CLI 使用同一 `homie-client` 和 `homie-proto`，不能绕过 runtime 直接改 state 文件。
 
+### FR-13: Worktree 与 workspace 管理
+
+第一个产品版本需要提供 worktree/workspace 能力：
+
+```text
+worktree.create
+worktree.list
+worktree.remove
+worktree.overview
+project.add
+```
+
+V1.0 可先只实现 workspace path 选择和 SQLite 记录；V1.1 补齐 git worktree 创建、清理、overview 和 UI 管理。
+
+### FR-14: 完整桌面工作台功能面
+
+Homie 桌面工作台需要覆盖以下 surface：
+
+- session sidebar：project sections、pinned、archive、drag reorder、multi-select、hover actions。
+- new session popover：选择 agent profile、workspace、runtime 可用性。
+- command palette。
+- quick open。
+- session overview board/list。
+- history / transcript scan / resume。
+- terminal pane：header、status chips、scrollback、selection、find、return-to-live、exited/resume/archive overlays。
+- settings：General、Terminal、Provider/LLM、Agent Profiles、Permissions、Remote。
+- account/status footer：usage、update、proxy health。
+
+V1.0 只要求基础 sidebar、active output、new session、provider/profile settings 和 usage summary；其余 surface 必须在 V1.x roadmap 中保留，并逐项拆 OpenSpec。
+
+### FR-15: Native system integration
+
+macOS native integration 由 Swift 或 Rust `objc2` 平台模块承载：
+
+- menu bar status rollup；
+- native notifications；
+- notification actions for approve/deny；
+- optional status sounds；
+- traffic-light/window chrome；
+- packaging metadata and entitlements。
+
+V1.0 可不实现 menu bar/notifications/sounds，但目录结构和 Swift/Rust platform seam 必须预留。
+
+### FR-16: Session lifecycle controls
+
+第一个产品版本需要覆盖完整 session lifecycle：
+
+```text
+session.spawn
+session.list
+session.attach
+session.input
+session.resize
+session.terminate
+session.archive
+session.unarchive
+session.reopen_last
+session.hibernate
+session.wake
+session.history
+session.resume_from_history
+```
+
+V1.0 最小闭环只实现 spawn/list/input/resize/terminate/read_output；archive/reopen/hibernate/wake/history resume 在后续 runtime work 中补齐。
+
+### FR-17: Artifact、Port、PR 与资源信息
+
+Homie 需要把 agent session 的外部产物变成可见 metadata：
+
+- artifacts；
+- listening ports；
+- pull requests；
+- git branch/worktree；
+- resource usage；
+- runtime health。
+
+V1.0 只要求 schema 和 UI 占位；V1.x 补 artifact scanner、port scanner、PR monitor 和 resource governor。
+
+### FR-18: Homie MCP control surface
+
+这里的 MCP control surface 指 Homie 对外暴露控制能力，让 agent 可以查询/创建/管理 Homie session 和任务；它不同于 MCP server proxy。
+
+V1.0 暂不实现 MCP control surface，但第一个产品版本需要保留：
+
+- `homie mcp-stdio` 或等价入口；
+- session list/spawn/status tools；
+- task read/update tools；
+- strict permission and audit；
+- 所有 tool 调用写入 tool metrics。
+
+### FR-19: Packaging、Updater 与 Release
+
+第一个产品版本需要正式桌面分发链路：
+
+- universal macOS app bundle；
+- icons、Info.plist、entitlements；
+- codesign；
+- notarization；
+- DMG/zip artifact；
+- update feed；
+- in-app update check；
+- release performance gate。
+
+V1.0 dev loop 不实现 packaging/updater，但需要在 specs 和 quality gates 中保留 release 准出。
+
+### FR-20: Remote execution roadmap
+
+第一个产品版本路线图需要包含远端执行能力，但不进入 V1.0 最小闭环：
+
+- remote execution host registry；
+- per-host account/profile 状态；
+- node health；
+- node usage merge；
+- checkpoint/move/fork/handoff；
+- SSH fallback；
+- token-based node enrollment；
+- no provider credential transfer。
+
+这些能力必须作为 V1.x 独立 PRD/OpenSpec，不得混入 V1.0 本地闭环实现。
+
 ## 4. 实现方案
 
 ### 4.1 第一阶段：工程骨架
@@ -849,6 +969,12 @@ CLI 使用同一 `homie-client` 和 `homie-proto`，不能绕过 runtime 直接�
 | `specs/task-controller/README.md` | 是 | 定义 V1 task model 与 Beads 边界 | 后续创建 |
 | `specs/intent-orchestrator/README.md` | 是 | 定义 V1 intent routing | 后续创建 |
 | `specs/observability/README.md` | 是 | 定义 LLM tokens、估算成本、请求耗时、工具调用耗时和聚合维度 | 后续创建 |
+| `specs/worktree-controller/README.md` | 是 | 定义 workspace/worktree 创建、列表、清理和 overview | 后续创建 |
+| `specs/session-lifecycle/README.md` | 是 | 定义 archive、hibernate、wake、reopen、history resume | 后续创建 |
+| `specs/native-system-integration/README.md` | 是 | 定义 menu bar、notification、sounds、window chrome、Swift/native seam | 后续创建 |
+| `specs/packaging-updater/README.md` | 是 | 定义 app bundle、签名、公证、更新和 release gate | 后续创建 |
+| `specs/remote-execution/README.md` | 是 | 定义 remote host/node/account/handoff roadmap | V1.x |
+| `specs/homie-mcp-control/README.md` | 是 | 定义 Homie MCP control surface，不等同于 MCP server proxy | 后续创建 |
 
 ## 6. 边界情况
 
@@ -936,3 +1062,9 @@ CLI 使用同一 `homie-client` 和 `homie-proto`，不能绕过 runtime 直接�
 - `homie-desktop-shell-p0`
 - `homie-agent-adapter-p0`
 - `homie-context-store-p0`
+- `homie-worktree-controller`
+- `homie-session-lifecycle`
+- `homie-native-system-integration`
+- `homie-packaging-updater`
+- `homie-mcp-control-surface`
+- `homie-remote-execution-roadmap`

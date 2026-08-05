@@ -38,6 +38,7 @@ reviewer: TRAE CLI
 - Homie LLM proxy 是统一流量入口，记录 token、cache hit rate、estimated cost、request latency、tool-call latency 和 safe error code。
 - 开发前必须参考 `docs/research/rust-package-selection.md`，优先复用成熟 crate；PTy 和 secret envelope 先做 spike 决策。
 - 开发前必须参考 `docs/architecture/project-layout.md`、`docs/development/standards.md`、`docs/development/quality-gates.md`，确保 Swift + Rust 混合项目结构和准出门禁先于代码落地。
+- 参考功能面已通过 `docs/research/reference-feature-coverage.md` 映射回 Homie PRD；V1.0 实现本地最小闭环，V1.x 保留 worktree、完整桌面 surfaces、native integration、packaging/updater、remote execution 和 Homie MCP control surface。
 
 非目标：
 
@@ -70,6 +71,7 @@ reviewer: TRAE CLI
 | 组件 spec | 编写 runtime-supervisor spec | socket protocol、session、PTY、events、output log | proto + agents | P0 |
 | 组件 spec | 编写 desktop-shell spec | GPUI shell、session sidebar、profile settings、usage summary | runtime + llm | P1 |
 | 调研 | 完成依赖选型确认 | `docs/research/rust-package-selection.md` 和 spike 决策 | 当前 PRD | P0 |
+| 调研 | 完成参考功能覆盖确认 | `docs/research/reference-feature-coverage.md` | 当前 PRD | P0 |
 | 规范 | 完成工程规范确认 | layout、development standards、quality gates | 当前 PRD | P0 |
 | 实现 | Bootstrap Rust workspace | Cargo workspace、toolchain、empty crates、doctor skeleton | P0 specs | P0 |
 | 实现 | SQLite storage MVP | schema migration、foreign keys、repository API | workspace | P0 |

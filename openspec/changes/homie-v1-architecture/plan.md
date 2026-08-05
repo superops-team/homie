@@ -63,6 +63,7 @@ This change defines Homie's first implementable architecture spec. It does not i
 | Secret scan | No staged secret pattern | `.githooks/pre-commit` |
 | Dependency research | Mature reusable Rust crates are identified before implementation | `docs/research/rust-package-selection.md` |
 | Project standards | Swift + Rust layout, development standards, and quality gates are defined | `docs/architecture/project-layout.md`, `docs/development/standards.md`, `docs/development/quality-gates.md` |
+| Reference feature coverage | Reference feature surface is mapped into Homie V1/V1.x scope | `docs/research/reference-feature-coverage.md` |
 
 ## 7. Release Gates
 
@@ -70,5 +71,6 @@ This change defines Homie's first implementable architecture spec. It does not i
 - Beads issue `homie-9c9` points to the PRD/spec.
 - Dependency research document exists and is referenced by the PRD/spec.
 - Layout, development standards, and quality gates exist and are referenced by the PRD/spec.
+- Reference feature coverage matrix exists and missing feature surfaces are represented in PRD/spec or V1.x roadmap.
 - Terminology check passes.
 - Markdown hygiene passes.

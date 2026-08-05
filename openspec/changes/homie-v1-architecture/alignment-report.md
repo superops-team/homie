@@ -28,6 +28,14 @@ openspec_tasks: openspec/changes/homie-v1-architecture/tasks.md
 | FR-10 Storage | P0 | T-001 | `specs/storage-indexing/README.md` | document review | pass |
 | FR-11 Desktop V1 UI | P0 | T-001 | `specs/desktop-shell/README.md` | document review | pass |
 | FR-12 CLI 与诊断 | P1 | T-001 | future CLI component spec | document review | pass |
+| FR-13 Worktree 与 workspace 管理 | P1 | T-001 | `specs/worktree-controller/README.md` | document review | pass |
+| FR-14 完整桌面工作台功能面 | P1 | T-001 | `specs/desktop-shell/README.md` | document review | pass |
+| FR-15 Native system integration | P1 | T-001 | `specs/native-system-integration/README.md` | document review | pass |
+| FR-16 Session lifecycle controls | P1 | T-001 | `specs/session-lifecycle/README.md` | document review | pass |
+| FR-17 Artifact、Port、PR 与资源信息 | P1 | T-001 | `specs/observability/README.md`, `specs/session-lifecycle/README.md` | document review | pass |
+| FR-18 Homie MCP control surface | P2 | T-001 | `specs/homie-mcp-control/README.md` | document review | pass |
+| FR-19 Packaging、Updater 与 Release | P1 | T-001 | `specs/packaging-updater/README.md` | document review | pass |
+| FR-20 Remote execution roadmap | P2 | T-001 | `specs/remote-execution/README.md` | document review | pass |
 
 ## 2. Component Spec Impact
 
@@ -44,6 +52,12 @@ openspec_tasks: openspec/changes/homie-v1-architecture/tasks.md
 | `specs/memory-controller/README.md` | yes | V1 memory boundary | pending follow-up |
 | `specs/task-controller/README.md` | yes | task model and Beads boundary | pending follow-up |
 | `specs/intent-orchestrator/README.md` | yes | V1 intent routing | pending follow-up |
+| `specs/worktree-controller/README.md` | yes | workspace/worktree create/list/remove/overview | pending follow-up |
+| `specs/session-lifecycle/README.md` | yes | attach/replay/archive/hibernate/wake/reopen/history resume | pending follow-up |
+| `specs/native-system-integration/README.md` | yes | menu bar, notifications, sounds, window chrome, Swift/native seam | pending follow-up |
+| `specs/packaging-updater/README.md` | yes | app bundle, signing, notarization, updater, release gates | pending follow-up |
+| `specs/homie-mcp-control/README.md` | yes | Homie MCP control surface for session/task orchestration | pending follow-up |
+| `specs/remote-execution/README.md` | yes | remote hosts, node accounts, usage merge, handoff roadmap | V1.x follow-up |
 
 ## 3. Beads Alignment
 

@@ -34,6 +34,7 @@ Acceptance:
 - Spec defers MCP server proxy execution to follow-up work while keeping config/schema boundaries.
 - Spec references the Rust package selection research and requires reuse of mature crates before implementation.
 - Spec references Swift + Rust large-project layout, development standards, and quality gates before implementation.
+- Spec maps the reference feature surface into Homie V1.0/V1.x scope.
 
 Evidence:
 
@@ -43,6 +44,7 @@ Evidence:
 - `docs/development/standards.md`
 - `docs/development/quality-gates.md`
 - `docs/research/rust-package-selection.md`
+- `docs/research/reference-feature-coverage.md`
 
 ### T-002: Map PRD requirements to follow-up component specs
 
