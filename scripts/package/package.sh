@@ -11,12 +11,12 @@ app_dir="$stage_dir/Homie.app"
 rm -rf "$stage_dir"
 mkdir -p "$stage_dir/bin" "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources/bin"
 
-cargo build --release -p homie-cli
+cargo build --release -p homie-cli -p homie-app
 cp target/release/homie "$stage_dir/bin/homie"
 chmod +x "$stage_dir/bin/homie"
 cp target/release/homie "$app_dir/Contents/Resources/bin/homie"
 chmod +x "$app_dir/Contents/Resources/bin/homie"
-cp target/release/homie "$app_dir/Contents/MacOS/Homie"
+cp target/release/Homie "$app_dir/Contents/MacOS/Homie"
 chmod +x "$app_dir/Contents/MacOS/Homie"
 cp README.md "$stage_dir/README.md"
 cp LICENSE "$stage_dir/LICENSE"

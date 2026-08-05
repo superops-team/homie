@@ -27,7 +27,7 @@ if [ -n "$blocked_matches" ]; then
   exit 1
 fi
 
-scan_files="$(printf '%s\n' "$staged_files" | grep -Ev '(^|/)(target|\.beads|\.dolt|\.git|dist|build|bundle|artifacts|tmp|temp|\.cache)/' || true)"
+scan_files="$(printf '%s\n' "$staged_files" | grep -Ev '(^|/)(target|vendor|\.beads|\.dolt|\.git|dist|build|bundle|artifacts|tmp|temp|\.cache)/' || true)"
 
 if [ -z "$scan_files" ]; then
   exit 0
