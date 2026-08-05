@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "crates/homie-cli",
+    "crates/homie-proto",
+    "crates/homie-storage",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+
+homie-proto = { path = "crates/homie-proto" }
+homie-storage = { path = "crates/homie-storage" }

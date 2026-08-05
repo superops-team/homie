@@ -1,0 +1,16 @@
+[package]
+name = "homie-storage"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+homie-proto.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

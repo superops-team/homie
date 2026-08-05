@@ -1,0 +1,396 @@
+use rusqlite::{Connection, OptionalExtension, params};
+use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+const SCHEMA_VERSION: i64 = 1;
+
+#[derive(Clone, Debug)]
+pub struct StorageConfig {
+    pub data_dir: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct Storage {
+    database_path: PathBuf,
+    connection: Connection,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigrationReport {
+    pub schema_version: i64,
+    pub applied: Vec<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageHealth {
+    pub database_path: PathBuf,
+    pub schema_version: i64,
+    pub foreign_keys: bool,
+    pub journal_mode: String,
+}
+
+#[derive(Debug, Error)]
+pub enum StorageError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("database schema version {found} is newer than supported {supported}")]
+    SchemaTooNew { found: i64, supported: i64 },
+}
+
+pub fn open_or_create(config: StorageConfig) -> Result<Storage, StorageError> {
+    std::fs::create_dir_all(&config.data_dir)?;
+    let database_path = config.data_dir.join("homie.sqlite");
+    let connection = Connection::open(&database_path)?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    connection.pragma_update(None, "journal_mode", "WAL")?;
+    Ok(Storage {
+        database_path,
+        connection,
+    })
+}
+
+impl Storage {
+    #[must_use]
+    pub fn database_path(&self) -> &Path {
+        &self.database_path
+    }
+
+    #[must_use]
+    pub fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
+    pub fn migrate(&self) -> Result<MigrationReport, StorageError> {
+        self.connection.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at INTEGER NOT NULL
+            );
+            "#,
+        )?;
+
+        let current = self.schema_version()?;
+        if current > SCHEMA_VERSION {
+            return Err(StorageError::SchemaTooNew {
+                found: current,
+                supported: SCHEMA_VERSION,
+            });
+        }
+        if current == SCHEMA_VERSION {
+            return Ok(MigrationReport {
+                schema_version: current,
+                applied: Vec::new(),
+            });
+        }
+
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute_batch(SCHEMA_V1)?;
+        transaction.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?1, strftime('%s','now'))",
+            params![SCHEMA_VERSION],
+        )?;
+        transaction.commit()?;
+
+        Ok(MigrationReport {
+            schema_version: SCHEMA_VERSION,
+            applied: vec![SCHEMA_VERSION],
+        })
+    }
+
+    pub fn health_check(&self) -> Result<StorageHealth, StorageError> {
+        let schema_version = self.schema_version()?;
+        let foreign_keys: i64 =
+            self.connection
+                .pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+        let journal_mode: String =
+            self.connection
+                .pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+        Ok(StorageHealth {
+            database_path: self.database_path.clone(),
+            schema_version,
+            foreign_keys: foreign_keys == 1,
+            journal_mode: journal_mode.to_ascii_lowercase(),
+        })
+    }
+
+    fn schema_version(&self) -> Result<i64, StorageError> {
+        let has_table: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if has_table.is_none() {
+            return Ok(0);
+        }
+        let version = self
+            .connection
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        Ok(version)
+    }
+}
+
+const SCHEMA_V1: &str = r#"
+CREATE TABLE providers (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    api_key_ref TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE llm_profiles (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+    name TEXT NOT NULL,
+    default_model TEXT NOT NULL,
+    allowed_models_json TEXT NOT NULL,
+    params_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE model_pricing (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+    model TEXT NOT NULL,
+    input_price_per_million TEXT NOT NULL,
+    output_price_per_million TEXT NOT NULL,
+    cached_input_price_per_million TEXT,
+    currency TEXT NOT NULL,
+    effective_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(provider_id, model, effective_at)
+);
+
+CREATE TABLE pricing_snapshots (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+    model TEXT NOT NULL,
+    input_price_per_million TEXT NOT NULL,
+    output_price_per_million TEXT NOT NULL,
+    cached_input_price_per_million TEXT,
+    currency TEXT NOT NULL,
+    source_pricing_id TEXT REFERENCES model_pricing(id) ON DELETE SET NULL,
+    captured_at INTEGER NOT NULL
+);
+
+CREATE TABLE runtime_descriptors (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    binary TEXT,
+    argv_template_json TEXT NOT NULL,
+    env_json TEXT NOT NULL,
+    env_scrub_json TEXT NOT NULL,
+    status_authority TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE permission_profiles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    filesystem_json TEXT NOT NULL,
+    network_json TEXT NOT NULL,
+    shell_json TEXT NOT NULL,
+    approval_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE agent_profiles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    runtime_id TEXT NOT NULL REFERENCES runtime_descriptors(id) ON DELETE RESTRICT,
+    llm_profile_id TEXT NOT NULL REFERENCES llm_profiles(id) ON DELETE RESTRICT,
+    permission_profile_id TEXT NOT NULL REFERENCES permission_profiles(id) ON DELETE RESTRICT,
+    workspace_scope_json TEXT NOT NULL,
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    is_default INTEGER NOT NULL CHECK(is_default IN (0, 1)),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX one_enabled_default_agent_profile
+ON agent_profiles(is_default)
+WHERE enabled = 1 AND is_default = 1;
+
+CREATE TABLE skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    source_json TEXT NOT NULL,
+    enabled_by_default INTEGER NOT NULL CHECK(enabled_by_default IN (0, 1)),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE agent_profile_skills (
+    agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    PRIMARY KEY(agent_profile_id, skill_id)
+);
+
+CREATE TABLE mcp_servers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    command TEXT,
+    url TEXT,
+    env_refs_json TEXT NOT NULL,
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE agent_profile_mcp_servers (
+    agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+    mcp_server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+    PRIMARY KEY(agent_profile_id, mcp_server_id)
+);
+
+CREATE TABLE effective_agent_configs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE RESTRICT,
+    runtime_id TEXT NOT NULL REFERENCES runtime_descriptors(id) ON DELETE RESTRICT,
+    llm_profile_id TEXT NOT NULL REFERENCES llm_profiles(id) ON DELETE RESTRICT,
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+    permission_profile_id TEXT NOT NULL REFERENCES permission_profiles(id) ON DELETE RESTRICT,
+    virtual_key_id TEXT,
+    skill_ids_json TEXT NOT NULL,
+    mcp_server_ids_json TEXT NOT NULL,
+    workspace_scope_json TEXT NOT NULL,
+    frozen_at INTEGER NOT NULL
+);
+
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE RESTRICT,
+    runtime_id TEXT NOT NULL REFERENCES runtime_descriptors(id) ON DELETE RESTRICT,
+    llm_profile_id TEXT NOT NULL REFERENCES llm_profiles(id) ON DELETE RESTRICT,
+    permission_profile_id TEXT NOT NULL REFERENCES permission_profiles(id) ON DELETE RESTRICT,
+    effective_config_id TEXT REFERENCES effective_agent_configs(id) ON DELETE SET NULL,
+    workspace TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    output_log_path TEXT NOT NULL,
+    output_tail_offset INTEGER NOT NULL DEFAULT 0,
+    virtual_key_id TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    last_seen_at INTEGER
+);
+
+CREATE TABLE context_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    safe_payload_json TEXT NOT NULL,
+    output_offset INTEGER,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE virtual_keys (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+    agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE RESTRICT,
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+    key_hash TEXT NOT NULL,
+    allowed_models_json TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    revoked_at INTEGER,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE usage_records (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE RESTRICT,
+    runtime_id TEXT NOT NULL REFERENCES runtime_descriptors(id) ON DELETE RESTRICT,
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+    llm_profile_id TEXT NOT NULL REFERENCES llm_profiles(id) ON DELETE RESTRICT,
+    model TEXT NOT NULL,
+    request_kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cached_input_tokens INTEGER,
+    cache_read_tokens INTEGER,
+    cache_write_tokens INTEGER,
+    cache_hit_rate TEXT,
+    reasoning_tokens INTEGER,
+    total_tokens INTEGER,
+    unit_price_input TEXT,
+    unit_price_output TEXT,
+    currency TEXT,
+    pricing_snapshot_id TEXT REFERENCES pricing_snapshots(id) ON DELETE SET NULL,
+    estimated_cost TEXT,
+    first_token_latency_ms INTEGER,
+    total_latency_ms INTEGER,
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL,
+    safe_error_code TEXT
+);
+
+CREATE TABLE tool_call_metrics (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE RESTRICT,
+    runtime_id TEXT NOT NULL REFERENCES runtime_descriptors(id) ON DELETE RESTRICT,
+    tool_name TEXT NOT NULL,
+    mcp_server_id TEXT REFERENCES mcp_servers(id) ON DELETE SET NULL,
+    status TEXT NOT NULL,
+    latency_ms INTEGER NOT NULL,
+    queue_latency_ms INTEGER,
+    input_bytes INTEGER,
+    output_bytes INTEGER,
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL,
+    safe_error_code TEXT
+);
+
+CREATE TABLE tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE SET NULL,
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    metadata_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE config_events (
+    id TEXT PRIMARY KEY,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    event_kind TEXT NOT NULL,
+    safe_payload_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE metrics_write_failures (
+    id TEXT PRIMARY KEY,
+    metric_kind TEXT NOT NULL,
+    subject_id TEXT,
+    safe_error_code TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+"#;

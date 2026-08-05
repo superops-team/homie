@@ -112,6 +112,10 @@ Key entrypoints:
 - [docs/workflows/requirements-management.md](./docs/workflows/requirements-management.md): Beads + PRD/spec + OpenSpec requirements management.
 - [docs/verification/report-templates/README.md](./docs/verification/report-templates/README.md): verification report templates.
 - [docs/security/pre-commit.md](./docs/security/pre-commit.md): local pre-commit secret scanning baseline.
+- [docs/architecture/project-layout.md](./docs/architecture/project-layout.md): Swift + Rust large-project layout and ownership boundaries.
+- [docs/development/standards.md](./docs/development/standards.md): Rust/Swift development standards.
+- [docs/development/quality-gates.md](./docs/development/quality-gates.md): evidence-first quality gates and release criteria.
+- [docs/research/rust-package-selection.md](./docs/research/rust-package-selection.md): reusable Rust package selection research.
 
 Beads is initialized with the `homie` issue prefix. Use `bd status`, `bd list`, `bd ready`, and `bd show <bead-id> --long` from the repository root to inspect work.
 

@@ -35,12 +35,13 @@ Meaningful changes must follow this sequence:
 1. Create or confirm a Beads issue with a stable `change_id`.
 2. Write or update a Chinese PRD/spec under `prd-spec/`.
 3. Evaluate affected long-lived component specs under `specs/`.
-4. Complete spec review and record evidence under `docs/verification/<change-id>/`.
-5. Create or update `openspec/changes/<change-id>/plan.md` and `tasks.md`.
-6. Prove PRD/spec to OpenSpec alignment in `openspec/changes/<change-id>/alignment-report.md` or `docs/verification/<change-id>/openspec-alignment-report.md`.
-7. Implement with SDD/TDD from the OpenSpec tasks.
-8. Run local verification and record results under `docs/verification/<change-id>/`.
-9. Update or close the Beads issue only after evidence matches the delivered state.
+4. Read the project layout, development standards, quality gates, and package research before implementation.
+5. Complete spec review and record evidence under `docs/verification/<change-id>/`.
+6. Create or update `openspec/changes/<change-id>/plan.md` and `tasks.md`.
+7. Prove PRD/spec to OpenSpec alignment in `openspec/changes/<change-id>/alignment-report.md` or `docs/verification/<change-id>/openspec-alignment-report.md`.
+8. Implement with SDD/TDD from the OpenSpec tasks.
+9. Run local verification and record results under `docs/verification/<change-id>/`.
+10. Update or close the Beads issue only after evidence matches the delivered state.
 
 Small documentation-only changes may use the lightweight version of this workflow, but they still need a clear source document and Beads linkage when they establish or change project process.
 
@@ -73,6 +74,13 @@ Beads stores status, priority, ownership, dependencies, and links. It does not r
 | Change execution | `openspec/changes/<change-id>/` | Per-change plan, task breakdown, and alignment |
 | Evidence | `docs/verification/<change-id>/` | Spec review, tests, E2E, security review, code review, and release readiness |
 | Issue state | Beads (`bd`) | Status, dependencies, priority, assignee, and spec links |
+
+Before implementation, read:
+
+- `docs/architecture/project-layout.md`
+- `docs/development/standards.md`
+- `docs/development/quality-gates.md`
+- `docs/research/rust-package-selection.md`
 
 ## PRD Spec Rules
 

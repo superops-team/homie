@@ -1,0 +1,17 @@
+[package]
+name = "homie-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "homie"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+homie-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
