@@ -16,6 +16,8 @@ cp target/release/homie "$stage_dir/bin/homie"
 chmod +x "$stage_dir/bin/homie"
 cp target/release/homie "$app_dir/Contents/Resources/bin/homie"
 chmod +x "$app_dir/Contents/Resources/bin/homie"
+cp target/release/homie "$app_dir/Contents/MacOS/Homie"
+chmod +x "$app_dir/Contents/MacOS/Homie"
 cp README.md "$stage_dir/README.md"
 cp LICENSE "$stage_dir/LICENSE"
 cp README.md "$app_dir/Contents/Resources/README.md"
@@ -49,25 +51,9 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-
-cat > "$app_dir/Contents/MacOS/Homie" <<'APP'
-#!/bin/sh
-set -eu
-
-resources_dir="$(cd "$(dirname "$0")/../Resources" && pwd)"
-homie_bin="$resources_dir/bin/homie"
-data_dir="${HOME}/Library/Application Support/Homie"
-
-output="$("$homie_bin" doctor --data-dir "$data_dir" --json 2>&1)" || {
-  /usr/bin/osascript -e 'display dialog "Homie failed to start. Run bin/homie doctor in Terminal for details." buttons {"OK"} default button "OK" with icon stop' >/dev/null 2>&1 || true
-  exit 1
-}
-
-/usr/bin/osascript <<OSA >/dev/null 2>&1 || true
-display dialog "Homie local V1 is ready.\n\nStorage initialized at:\n$data_dir\n\n$output" buttons {"OK"} default button "OK" with title "Homie" with icon note
-OSA
-APP
-chmod +x "$app_dir/Contents/MacOS/Homie"
+if command -v codesign >/dev/null 2>&1; then
+  codesign --force --deep --sign - "$app_dir" >/dev/null
+fi
 
 tar -czf "$archive" -C "$dist_dir" "homie-$version-$target_triple"
 echo "$archive"

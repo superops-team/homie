@@ -9,7 +9,7 @@ use std::path::PathBuf;
 #[command(about = "Homie local development and diagnostics CLI")]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -93,14 +93,15 @@ struct RuntimeStatusOutput {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Doctor(args) => doctor(args),
-        Command::Runtime(command) => match command.command {
+        Some(Command::Doctor(args)) => doctor(args),
+        Some(Command::Runtime(command)) => match command.command {
             RuntimeSubcommand::Status(args) => runtime_status(args),
         },
-        Command::Session(command) => match command.command {
+        Some(Command::Session(command)) => match command.command {
             SessionSubcommand::Create(args) => session_create(args),
             SessionSubcommand::List(args) => session_list(args),
         },
+        None => app_launch(),
     }
 }
 
@@ -205,6 +206,48 @@ fn print_session_or_json(session: &SessionSummary, json: bool) -> anyhow::Result
         );
     }
     Ok(())
+}
+
+fn app_launch() -> anyhow::Result<()> {
+    let data_dir = default_data_dir();
+    let storage = open_or_create(StorageConfig {
+        data_dir: data_dir.clone(),
+    })
+    .with_context(|| format!("open storage at {}", data_dir.display()))?;
+    storage.migrate().context("migrate storage")?;
+    storage.seed_defaults().context("seed default config")?;
+    let health = storage.health_check().context("check storage health")?;
+
+    let message = format!(
+        "Homie local V1 is ready.\n\nStorage initialized at:\n{}\n\nSchema: {}\nForeign keys: {}\nJournal: {}",
+        data_dir.display(),
+        health.schema_version,
+        health.foreign_keys,
+        health.journal_mode
+    );
+
+    if cfg!(target_os = "macos") {
+        let script = format!(
+            "display dialog {} buttons {{\"OK\"}} default button \"OK\" with title \"Homie\" with icon note",
+            applescript_string(&message)
+        );
+        let _ = std::process::Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(script)
+            .status();
+    } else {
+        println!("{message}");
+    }
+
+    Ok(())
+}
+
+fn applescript_string(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!("\"{escaped}\"")
 }
 
 fn default_data_dir() -> PathBuf {
