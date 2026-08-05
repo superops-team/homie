@@ -1,0 +1,142 @@
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100/
+.Trashes/
+.fseventsd/
+.TemporaryItems/
+.VolumeIcon.icns
+Icon?
+
+# Rust build output
+/target/
+**/target/
+debug/
+release/
+*.rs.bk
+*.pdb
+
+# Cargo local files
+# Keep Cargo.lock tracked for this desktop application.
+!Cargo.lock
+.cargo/.package-cache
+.cargo/registry/
+.cargo/git/
+.cargo/credentials
+.cargo/credentials.toml
+
+# Rust tooling caches
+.rustc_info.json
+.clippy.toml.bak
+tarpaulin-report.html
+cobertura.xml
+lcov.info
+
+# Editors and IDEs
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/settings.example.json
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.local.example
+.envrc
+.direnv/
+.netrc
+.npmrc
+.pypirc
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.keystore
+*.jks
+*.kdbx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+secrets/
+secret/
+credentials/
+credential/
+*credentials*.json
+*service-account*.json
+*.local.toml
+*.local.yaml
+*.local.yml
+*.local.json
+config.local.*
+providers.local.*
+models.local.*
+homie.local.*
+
+# Local agent and LLM tool state
+.codex/
+.claude/
+.opencode/
+.openai/
+.anthropic/
+.agents/*
+!.agents/skills/
+!.agents/skills/*/
+!.agents/skills/*/SKILL.md
+
+# Logs, reports, and crash dumps
+*.log
+logs/
+crash.log
+*.crash
+*.dmp
+*.prof
+*.trace
+
+# Local databases and storage
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.duckdb
+*.sled/
+*.redb
+*.rocksdb/
+storage/
+data/
+
+# App packaging and generated artifacts
+dist/
+build/
+bundle/
+artifacts/
+tmp/
+temp/
+.cache/
+
+# Xcode/macOS desktop build side effects
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Beads / Dolt local state
+.beads/
+.dolt/
+.beads-credential-key
+
+# Keep repository hooks tracked; they are enabled with:
+# git config core.hooksPath .githooks

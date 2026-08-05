@@ -1,0 +1,67 @@
+#!/bin/sh
+set -eu
+
+fail() {
+  printf '%s\n' "$1" >&2
+  exit 1
+}
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  exit 0
+fi
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+if [ -z "$staged_files" ]; then
+  exit 0
+fi
+
+blocked_paths='(^|/)(\.env($|\.)|\.netrc$|\.npmrc$|\.pypirc$|\.cargo/credentials(\.toml)?$|.*credentials.*\.json$|.*service-account.*\.json$|.*\.pem$|.*\.key$|.*\.p8$|.*\.p12$|.*\.pfx$|.*\.keystore$|.*\.jks$|id_(rsa|dsa|ecdsa|ed25519)$|.*\.local\.(toml|ya?ml|json)$|config\.local\..*$|providers\.local\..*$|models\.local\..*$|homie\.local\..*$)'
+allowlisted_paths='(^|/)(\.env\.example|\.env\.sample|\.env\.template|.*\.example\.(toml|ya?ml|json)|.*\.sample\.(toml|ya?ml|json)|.*\.template\.(toml|ya?ml|json))$'
+
+blocked_matches="$(printf '%s\n' "$staged_files" | grep -E "$blocked_paths" | grep -Ev "$allowlisted_paths" || true)"
+if [ -n "$blocked_matches" ]; then
+  printf '%s\n' "pre-commit: refusing to commit sensitive local files:" >&2
+  printf '%s\n' "$blocked_matches" >&2
+  printf '%s\n' "Move real secrets to local ignored files. Commit only sanitized *.example/*.sample templates." >&2
+  exit 1
+fi
+
+scan_files="$(printf '%s\n' "$staged_files" | grep -Ev '(^|/)(target|\.beads|\.dolt|\.git|dist|build|bundle|artifacts|tmp|temp|\.cache)/' || true)"
+
+if [ -z "$scan_files" ]; then
+  exit 0
+fi
+
+tmp_file="$(mktemp -t homie-precommit-secrets.XXXXXX)"
+trap 'rm -f "$tmp_file"' EXIT
+
+printf '%s\n' "$scan_files" | while IFS= read -r file; do
+  if ! git cat-file -e ":$file" 2>/dev/null; then
+    continue
+  fi
+
+  if git cat-file -p ":$file" | LC_ALL=C grep -Iq .; then
+    git cat-file -p ":$file" | awk -v path="$file" '{ print path ":" FNR ":" $0 }' >> "$tmp_file"
+  fi
+done
+
+if [ ! -s "$tmp_file" ]; then
+  exit 0
+fi
+
+secret_patterns='(-----BEGIN (RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY-----|ghp_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{80,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{32,}|sk-ant-[A-Za-z0-9_-]{32,}|xox[baprs]-[A-Za-z0-9-]{20,}|AIza[0-9A-Za-z_-]{35}|(api[_-]?key|secret|token|password|passwd|pwd|authorization|bearer)[[:space:]]*[:=][[:space:]]*["'\'']?[^"'\'']{12,})'
+placeholder_patterns='(<[^>]*(api[_-]?key|key|token|secret|password)[^>]*>|example|sample|dummy|placeholder|changeme|change-me|your_|test_|xxx|null|none)'
+
+matches="$(grep -Eain "$secret_patterns" "$tmp_file" | grep -Eavi "$placeholder_patterns" || true)"
+
+if [ -n "$matches" ]; then
+  printf '%s\n' "pre-commit: possible secret detected in staged content." >&2
+  printf '%s\n' "$matches" | sed -E 's/(.{180}).*/\1.../' >&2
+  printf '%s\n' "" >&2
+  printf '%s\n' "Commit blocked. Remove real credentials, tokens, private keys, provider keys, and Authorization values before committing." >&2
+  printf '%s\n' "If this is a sanitized example, use placeholder values such as '<YOUR_API_KEY>' or 'example-token'." >&2
+  exit 1
+fi
+
+exit 0
