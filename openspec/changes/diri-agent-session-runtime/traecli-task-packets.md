@@ -911,12 +911,15 @@ replay、counts、SHA；明确释放 actor/lib 给 G7，signal API 给 G9/G10。
 - **Allowed write paths:**
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/src/status_runtime.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/src/runtime_actor.rs`
+  - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/src/dispatcher.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/tests/runtime_status_engine.rs`
+  - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/tests/runtime_dispatcher.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-proto/src/model.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-proto/tests/runtime_transport_contract.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-client/src/client.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-client/tests/typed_facade.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-cli/src/main.rs`
+  - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-cli/tests/events_cli.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-cli/tests/hook_report_runtime_cli.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-cli/tests/notify_runtime_cli.rs`
 - **Forbidden paths:** 所有未列路径；尤其 raw payload persistence、`homie-storage/**`、
@@ -934,8 +937,11 @@ cd /Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime
 ```text
 cd /Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime
 /opt/homebrew/bin/cargo test -p homie-runtime --test runtime_status_engine -- --nocapture
+/opt/homebrew/bin/cargo test -p homie-runtime --lib dispatcher::tests::every_registered_handler_decodes_to_its_declared_execution_class -- --exact
+/opt/homebrew/bin/cargo test -p homie-runtime --test runtime_dispatcher production_actor_handlers_execute_runtime_lifecycle_and_shutdown -- --exact --nocapture
 /opt/homebrew/bin/cargo test -p homie-proto --test runtime_transport_contract
 /opt/homebrew/bin/cargo test -p homie-client --test typed_facade
+/opt/homebrew/bin/cargo test -p homie-cli --test events_cli -- --nocapture
 /opt/homebrew/bin/cargo test -p homie-cli --test hook_report_runtime_cli -- --nocapture
 /opt/homebrew/bin/cargo test -p homie-cli --test notify_runtime_cli -- --nocapture
 ```
@@ -954,8 +960,8 @@ wave1b/diri-agent-session-runtime。active 4h，每 suite 120s。确认 G6 pass�
 
 读取 AGENTS.md、T-102 PRD FR-05/10、design Decision 7-8/16、plan G7、tasks 2.7、
 delegation-plan、runtime-status-governor hook requirements。只写声明的 status/actor、
-proto/client/CLI focused hook files/tests。禁止 storage、holder/process/governor/recovery，
-禁止持久化或 event/log 输出 raw payload。
+dispatcher contract fixture、proto/client/CLI focused hook/event files/tests。禁止 storage、
+holder/process/governor/recovery，禁止持久化或 event/log 输出 raw payload。
 
 先跑 external ingress RED。最小实现严格 allowlisted Hook/Notify DTO 和 parser mapping；
 敏感/free-form 数据 reject 或 reduce；subagent signal 不覆盖 parent status/title/needs-input；
@@ -965,8 +971,11 @@ proto/client/CLI focused hook files/tests。禁止 storage、holder/process/gove
 运行全部 GREEN commands：
 cd /Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime
 /opt/homebrew/bin/cargo test -p homie-runtime --test runtime_status_engine -- --nocapture
+/opt/homebrew/bin/cargo test -p homie-runtime --lib dispatcher::tests::every_registered_handler_decodes_to_its_declared_execution_class -- --exact
+/opt/homebrew/bin/cargo test -p homie-runtime --test runtime_dispatcher production_actor_handlers_execute_runtime_lifecycle_and_shutdown -- --exact --nocapture
 /opt/homebrew/bin/cargo test -p homie-proto --test runtime_transport_contract
 /opt/homebrew/bin/cargo test -p homie-client --test typed_facade
+/opt/homebrew/bin/cargo test -p homie-cli --test events_cli -- --nocapture
 /opt/homebrew/bin/cargo test -p homie-cli --test hook_report_runtime_cli -- --nocapture
 /opt/homebrew/bin/cargo test -p homie-cli --test notify_runtime_cli -- --nocapture
 全过且输出/事件/持久化无 raw payload。清理 temp facts。
