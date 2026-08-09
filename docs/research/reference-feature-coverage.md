@@ -10,56 +10,50 @@
 - `covered-later`: Homie PRD 明确作为 V1 后续阶段覆盖。
 - `partial`: Homie PRD 有相关边界，但功能项不完整。
 - `missing`: Homie PRD 未覆盖，需要补充。
+- `covered-by-reference-parity-v1`: 已由 `reference-parity-v1` PRD/OpenSpec 接管，属于 Homie Reference Parity V1 准出范围。
 
 ## 2. 功能覆盖矩阵
 
 | 参考功能面 | Homie 目标能力 | 当前状态 | 处理 |
 |------------|----------------|----------|------|
-| Rust + GPUI 桌面应用 | `homie-app` + `homie-ui` + GPUI shell | covered-v1 | 已在 V1 PRD |
-| 双进程 app/runtime 架构 | `homie-app` + `homie-runtime` + protocol | covered-v1 | 已在 V1 PRD |
-| 后台 runtime 管理 PTY/agent process | `homie-runtime` session/PTY/process | covered-v1 | 已在 V1 PRD |
-| output log detach/replay | output log + `session.read_output` + terminal attach | partial | PRD 已有 output log/read_output，需补 offset-addressed replay 细节 |
-| headless terminal emulator 状态检测 | `homie-runtime` + `homie-term` grid/screen | covered-v1 | 已在 V1 PRD |
-| session registry/persistence | SQLite `sessions` + context | covered-v1 | 已在 V1 PRD |
-| holder/PTY master survives runtime crash | runtime independent survival | covered-later | PRD 标为 V1.1，需显式功能项 |
-| worktrees | workspace/worktree controller | missing | 需要补 `worktree.*` 能力 |
-| command palette | command palette | missing | 需要补 UI surface |
-| quick open | quick open | missing | 需要补 UI surface |
-| session overview board/list | session overview | missing | 需要补 UI surface |
-| history scan and resume | transcript/history scanner + resume | partial | PRD 有历史输出入口，不够完整 |
-| terminal scrollback/selection/find | terminal grid -> scrollback/selection/find | covered-v1 | 已有演进路径 |
-| sidebar sections/pinned/archive/drag reorder | session sidebar advanced interactions | partial | PRD 只有基础 sidebar |
-| new session popover | profile/runtime/session creation UI | partial | PRD 有新建 session/profile，但未写 popover 行为 |
-| settings window | provider/profile/permission/settings | partial | PRD 有 settings，需补设置 tabs |
-| menu bar extra | status rollup/menu bar | missing | 需要补 macOS native integration |
-| notifications approve/deny | native notification actions | missing | 需要补 system bridge |
-| sounds | status sounds | missing | 需要补 optional UI feedback |
-| usage accounting | usage_records/token/cost/cache/latency | covered-v1 | 已在 V1 PRD |
-| update mechanism | self-updater/release feed | missing | 需要补 updater/packaging |
-| packaging/sign/notarize | macOS packaging pipeline | missing | 需要补 packaging spec |
-| remote hosts/nodes | remote execution hosts | covered-later | PRD 说不做远端 fleet，但第一个完整产品应作为 V1.x |
-| per-node accounts/usage | node account/profile/usage | covered-later | 与 remote execution 绑定 |
-| move/fork/handoff | session handoff between nodes | covered-later | V1.x |
-| MCP server for agents to orchestrate agents | Homie MCP surface | missing | 需区别于 MCP server proxy；当前只说 MCP proxy deferred |
-| hook/notify forwarders | agent hook/notify ingestion | partial | PRD 有 HookPrimary，但无 CLI/hook surface |
-| status detection manifests | runtime descriptor/status rules | covered-v1 | 已在 V1 PRD |
-| CLI doctor/status | `homie-cli doctor`, status | covered-v1 | 已在 V1 PRD/实现 |
-| resource governor | runtime resource limits | missing | 需要补 runtime capability |
-| hibernate/wake/archive/reopen | session lifecycle controls | partial | PRD 只有 terminate/history |
-| port/artifact/PR chips | session metadata surfaces | missing | 需要补 artifact/port/PR monitor |
-| performance gates | perf budgets/gates | partial | quality gates 有性能门禁，PRD 无具体预算 |
-| auto-update trust model | update verification | missing | 需要补 updater spec |
+| Rust + GPUI 桌面应用 | `homie-app` + `homie-ui` + GPUI shell | covered-by-reference-parity-v1 | FR-2, FR-7, T-007, T-008 |
+| 双进程 app/runtime 架构 | `homie-app` + `homie-runtime` + protocol | covered-by-reference-parity-v1 | FR-2, FR-4, T-002, T-004 |
+| 后台 runtime 管理 PTY/agent process | `homie-runtime` session/PTY/process | covered-by-reference-parity-v1 | FR-4, T-004 |
+| output log detach/replay | offset-addressed output log + attach/read/replay | covered-by-reference-parity-v1 | FR-4, T-004 |
+| headless terminal emulator 状态检测 | runtime headless screen + status reducer | covered-by-reference-parity-v1 | FR-3, FR-4, T-003, T-004 |
+| session registry/persistence | SQLite `sessions` + context + output index | covered-by-reference-parity-v1 | FR-4, FR-18, T-004, T-005 |
+| holder/PTY master survives runtime crash | holder-equivalent PTY/process ownership | covered-by-reference-parity-v1 | FR-4, T-004 |
+| worktrees | workspace/worktree controller and safe cleanup | covered-by-reference-parity-v1 | FR-8, T-010 |
+| command palette | command palette with actions and sessions | covered-by-reference-parity-v1 | FR-7, T-009 |
+| quick open | folder index and git-aware ranking | covered-by-reference-parity-v1 | FR-7, T-009 |
+| session overview board/list | overview board/list with bulk close | covered-by-reference-parity-v1 | FR-7, T-009 |
+| history scan and resume | transcript/history scanner + resume | covered-by-reference-parity-v1 | FR-9, T-009 |
+| terminal scrollback/selection/find | terminal grid -> scrollback/selection/find | covered-by-reference-parity-v1 | FR-6, T-006 |
+| sidebar sections/pinned/archive/drag reorder | advanced sidebar interactions | covered-by-reference-parity-v1 | FR-7, T-008 |
+| new session popover | profile/runtime/session creation UI | covered-by-reference-parity-v1 | FR-7, T-008 |
+| settings window | General/Terminal/Resources/Remote tabs | covered-by-reference-parity-v1 | FR-7, FR-13, T-008, T-014 |
+| right workbench inspector | Info/Changes/Artifacts tabs and diff virtualization | covered-by-reference-parity-v1 | FR-7, FR-10, T-008, T-011 |
+| menu bar extra | status rollup/menu bar | covered-by-reference-parity-v1 | FR-7, T-007 |
+| notifications approve/deny | native notification actions | covered-by-reference-parity-v1 | FR-7, FR-3, T-007, T-003 |
+| sounds | status sounds | covered-by-reference-parity-v1 | FR-7, T-007 |
+| usage accounting | usage_records/token/cost/cache/latency | covered-by-reference-parity-v1 | FR-11, T-012 |
+| update mechanism | self-updater/release feed | covered-by-reference-parity-v1 | FR-16, T-016 |
+| packaging/sign/notarize | macOS packaging pipeline | covered-by-reference-parity-v1 | FR-16, T-016 |
+| remote hosts/nodes | remote execution hosts and first-party node | covered-by-reference-parity-v1 | FR-13, T-014 |
+| per-node accounts/usage | node account/profile/usage | covered-by-reference-parity-v1 | FR-13, FR-11, T-014, T-012 |
+| move/fork/handoff | session handoff between nodes | covered-by-reference-parity-v1 | FR-13, T-014 |
+| MCP server for agents to orchestrate agents | Homie MCP automation surface | covered-by-reference-parity-v1 | FR-14, T-013 |
+| hook/notify forwarders | agent hook/notify ingestion | covered-by-reference-parity-v1 | FR-14, T-013 |
+| status detection manifests | runtime descriptor/status rules | covered-by-reference-parity-v1 | FR-3, T-003 |
+| CLI doctor/status | `homie-cli doctor`, status, session/worktree/events | covered-by-reference-parity-v1 | FR-14, T-013 |
+| resource governor | runtime resource limits and active state | covered-by-reference-parity-v1 | FR-15, T-004, T-016 |
+| hibernate/wake/archive/reopen | session lifecycle controls | covered-by-reference-parity-v1 | FR-4, T-004 |
+| port/artifact/PR chips | session metadata surfaces | covered-by-reference-parity-v1 | FR-10, T-011 |
+| performance gates | packaged perf budgets/gates | covered-by-reference-parity-v1 | FR-17, T-016 |
+| auto-update trust model | update verification | covered-by-reference-parity-v1 | FR-16, T-016 |
 
 ## 3. 结论
 
-当前 Homie V1 PRD 覆盖了核心架构、runtime、SQLite、LLM proxy、agent profile 和 usage metrics，但尚未完整覆盖参考工程的产品功能面。需要把以下能力补回 PRD：
+`reference-parity-v1` PRD 已将原先缺口纳入 Homie Reference Parity V1 准出范围，但这不代表功能已经实现。当前 Diri parity 的权威锁定清单位于 `docs/research/diri-parity-lock.md`；只要 `make parity-lock` 仍列出 incomplete rows，Homie 就不得被描述为 Diri-parity-complete。
 
-- worktree management；
-- command palette / quick open / overview / history / advanced sidebar；
-- menu bar / native notification actions / sounds；
-- packaging / updater / performance gate；
-- resource governor；
-- session lifecycle controls: archive, hibernate, wake, reopen；
-- artifact/port/PR metadata surfaces；
-- Homie MCP control surface；
-- remote execution hosts / node accounts / handoff 作为 V1.x 阶段。
+后续实现必须按 `docs/research/diri-parity-lock.md` 的行项目拆分 Beads/OpenSpec/验证 Case，更新组件 spec，并在 `docs/verification/` 写入真实验证证据后，才能逐行把状态改为 `implemented`。

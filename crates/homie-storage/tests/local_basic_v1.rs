@@ -80,3 +80,53 @@ fn create_session_fails_without_enabled_default_profile() {
         StorageError::DefaultAgentProfileUnavailable
     ));
 }
+
+#[test]
+fn create_session_with_parent_is_one_atomic_insert() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let storage = open_or_create(StorageConfig {
+        data_dir: temp.path().to_path_buf(),
+    })
+    .expect("open storage");
+    storage.migrate().expect("migrate");
+    storage.seed_defaults().expect("seed defaults");
+    let parent = storage
+        .create_session(CreateSession {
+            workspace: temp.path().to_path_buf(),
+            title: Some("Parent".to_string()),
+        })
+        .expect("create parent");
+
+    let child = storage
+        .create_session_with_parent(
+            CreateSession {
+                workspace: temp.path().to_path_buf(),
+                title: Some("Child".to_string()),
+            },
+            Some(&parent.id),
+        )
+        .expect("create child with parent");
+
+    assert_eq!(
+        storage
+            .session_core_metadata(&child.id)
+            .expect("child metadata")
+            .parent_session_id
+            .as_deref(),
+        Some(parent.id.as_str())
+    );
+    storage
+        .create_session_with_parent(
+            CreateSession {
+                workspace: temp.path().to_path_buf(),
+                title: Some("Invalid child".to_string()),
+            },
+            Some("missing-parent"),
+        )
+        .expect_err("foreign key must reject missing parent");
+    assert_eq!(
+        storage.list_sessions().expect("list sessions").len(),
+        2,
+        "failed atomic insert must not leave an orphan session"
+    );
+}

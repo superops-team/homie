@@ -1,0 +1,11 @@
+[package]
+name = "homie-term"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+homie-proto.workspace = true
+thiserror.workspace = true

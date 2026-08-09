@@ -1,0 +1,33 @@
+[package]
+name = "homie-runtime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+alacritty_terminal.workspace = true
+homie-agents.workspace = true
+homie-proto.workspace = true
+homie-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "homie-runtime-holder"
+path = "src/bin/homie-runtime-holder.rs"
+
+[[bin]]
+name = "homie-runtime-daemon"
+path = "src/bin/homie-runtime-daemon.rs"
+
+[dev-dependencies]
+homie-client.workspace = true
+tempfile.workspace = true

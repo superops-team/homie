@@ -6,10 +6,22 @@ rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "Homie"
+name = "homie-app"
 path = "src/main.rs"
 
 [dependencies]
 gpui.workspace = true
 gpui_platform.workspace = true
+homie-client.workspace = true
+homie-proto.workspace = true
 homie-storage.workspace = true
+homie-term.workspace = true
+homie-ui.workspace = true
+libc.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+tempfile.workspace = true

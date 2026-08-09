@@ -458,9 +458,9 @@ GET  /v1/models
 
 认证：
 
-- agent 使用 `Authorization: Bearer <HOMIE_VIRTUAL_KEY>`。
+- agent 使用标准 HTTP 授权头携带 Homie virtual key，示例值不得写入文档。
 - proxy 校验 virtual key 是否存在、未过期、未撤销、session/agent scope 匹配。
-- proxy 根据 provider config 注入真实 provider key。
+- proxy 根据 provider runtime config 注入真实 provider key。
 - proxy 响应和日志不得包含真实 key。
 
 usage：

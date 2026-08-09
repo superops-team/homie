@@ -1,4 +1,4 @@
-use homie_storage::{StorageConfig, open_or_create};
+use homie_storage::{SettingsPreferences, StorageConfig, open_or_create};
 
 #[test]
 fn doctor_storage_creates_sqlite_and_reports_wal_foreign_keys() {
@@ -9,10 +9,10 @@ fn doctor_storage_creates_sqlite_and_reports_wal_foreign_keys() {
     .expect("open storage");
 
     let report = storage.migrate().expect("migrate");
-    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.schema_version, 3);
 
     let health = storage.health_check().expect("health");
-    assert_eq!(health.schema_version, 1);
+    assert_eq!(health.schema_version, 3);
     assert!(health.foreign_keys);
     assert_eq!(health.journal_mode, "wal");
     assert_eq!(health.database_path, temp.path().join("homie.sqlite"));
@@ -30,9 +30,49 @@ fn migration_is_idempotent() {
     let first = storage.migrate().expect("first migrate");
     let second = storage.migrate().expect("second migrate");
 
-    assert_eq!(first.schema_version, 1);
-    assert_eq!(second.schema_version, 1);
+    assert_eq!(first.schema_version, 3);
+    assert_eq!(second.schema_version, 3);
     assert!(second.applied.is_empty());
+}
+
+#[test]
+fn settings_preferences_round_trip_through_preferences_table() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let storage = open_or_create(StorageConfig {
+        data_dir: temp.path().to_path_buf(),
+    })
+    .expect("open storage");
+    storage.migrate().expect("migrate");
+
+    assert_eq!(
+        storage
+            .load_settings_preferences()
+            .expect("default preferences"),
+        SettingsPreferences::default()
+    );
+
+    let preferences = SettingsPreferences {
+        startup_behavior: "new_terminal".to_string(),
+        terminal_font_size: 15,
+        hibernate_idle_minutes: 20,
+        remote_companion_access: true,
+    };
+    storage
+        .save_settings_preferences(&preferences)
+        .expect("save preferences");
+    assert_eq!(
+        storage
+            .load_settings_preferences()
+            .expect("load preferences"),
+        preferences
+    );
+
+    let raw = storage
+        .get_preference_json("settings")
+        .expect("raw preference")
+        .expect("settings preference");
+    assert_eq!(raw["terminalFontSize"], 15);
+    assert_eq!(raw["remoteCompanionAccess"], true);
 }
 
 #[test]

@@ -27,6 +27,13 @@
 
 Homie 是本地优先的 Rust + GPUI 桌面应用。它管理多个后台 agent，统一 LLM 配置和虚拟 key，维护全局 context/memory/task，并通过意图识别和编排器把用户请求路由到合适的 agent 或内部工作流。
 
+Diri 功能对齐的当前唯一基线是内嵌 `diri/` 仓库提交 `7ba3407`。权威需求和能力状态分别位于：
+
+- `prd-spec/features/diri-7ba3407-parity-rebaseline/2026-08-08-diri-7ba3407-parity-rebaseline-design.md`
+- `docs/research/diri-7ba3407-capability-matrix.md`
+
+历史 `reference-parity-v1`、模块 inventory 和微切片文档保留为证据，但不再决定当前 parity 完成态。
+
 核心基线：
 
 | 主题 | 约束 |
@@ -49,6 +56,7 @@ Homie 是本地优先的 Rust + GPUI 桌面应用。它管理多个后台 agent�
 |--------|------|----------|----------|
 | P0 | Desktop Shell | `specs/desktop-shell/README.md` | GPUI 应用壳、窗口、pane、导航、状态订阅和用户交互 |
 | P0 | Runtime Supervisor | `specs/runtime-supervisor/README.md` | 后台进程启动、停止、重启、健康检查、资源限制和生命周期事件 |
+| P0 | Runtime Client Transport | `specs/runtime-client-transport/README.md` | 独立 runtime 的 control/data channel、请求关联、重连、事件续传和 attachment |
 | P0 | Agent Adapter Contract | `specs/agent-adapter-contract/README.md` | Codex/Claude Code/OpenCode adapter 的统一边界、能力声明、I/O 和错误模型 |
 | P0 | LLM Proxy | `specs/llm-proxy/README.md` | OpenAI-compatible endpoint、provider routing、model aliases、token/cost accounting |
 | P0 | Virtual Key & Credentials | `specs/virtual-key-credentials/README.md` | 真实 key 存储、虚拟 key 签发、作用域、撤销、审计和泄漏防护 |
@@ -58,6 +66,9 @@ Homie 是本地优先的 Rust + GPUI 桌面应用。它管理多个后台 agent�
 | P1 | Intent Orchestrator | `specs/intent-orchestrator/README.md` | 意图识别、agent/workflow 路由、上下文裁剪、执行监督和结果归档 |
 | P1 | Storage & Indexing | `specs/storage-indexing/README.md` | 本地持久化、schema、索引、迁移策略、备份和一致性 |
 | P1 | Observability | `specs/observability/README.md` | 日志、metrics、trace、usage、agent run 事件和排障入口 |
+| P1 | MCP Automation | `specs/mcp-automation/README.md` | CLI、hook/notify、MCP tools、browser/test_run 和 lineage 权限 |
+| P1 | Packaging & Updater | `specs/packaging-updater/README.md` | app bundle、签名公证、更新 feed、安装回滚和 packaged perf gate |
+| P1 | Remote Node & Handoff | `specs/remote-node-handoff/README.md` | remote hosts、node、accounts、handoff、fleet usage 和 companion access |
 | P2 | Cross-Agent Collaboration | `specs/cross-agent-collaboration/README.md` | 多 agent 分工、依赖、冲突处理、handoff 和结果合并 |
 
 优先级含义：
@@ -83,6 +94,35 @@ Homie 是本地优先的 Rust + GPUI 桌面应用。它管理多个后台 agent�
 9. `可观测性`：定义日志、指标、trace、event、healthcheck 和排障入口。
 10. `失败与恢复`：列出 retry、resume、cancel、drain、崩溃恢复、provider 不可用等处理策略。
 11. `测试计划与验收引用`：列出单测、集成测试、端到端验证、故障注入和人工验证命令。
+
+## Diri Feature Atom Ownership
+
+本表修复 `docs/verification/diri-module-inventory/bingo-component-spec-review-report.md` 中的 P0 问题：每个组件 spec 必须明确承接 `docs/research/diri-module-inventory.md` 的哪些 `Mxx-F###` 功能原子项。后续 PRD/OpenSpec 不得绕过本表直接实现。
+
+| Component spec | Owned feature atoms | Required Diri test mapping | Implementation readiness |
+|----------------|---------------------|----------------------------|--------------------------|
+| `specs/desktop-shell/README.md` | M01-F001, M01-F002, M02-F001, M02-F002, M03-F001, M04-F001, M05-F001, M06-F001, M08-F001, M09-F001, M19-F002, M20-F002 UI | Diri app screenshot states, workbench/sidebar/terminal/inspector/settings/notifications UI flows | Needs UI state matrix and side-by-side screenshot gates before implementation closeout |
+| `specs/runtime-supervisor/README.md` | M03-F002, M07-F001, M10-F001 runtime methods, M11-F002, M14-F001, M14-F002, M15-F001, M15-F002 | `SessionIntegrationTests`, `OutputLogTests`, `HeadlessScreenTests`, `EventSubscriptionTests`, `HolderTests`, `ProcessTreeTests`, `ResourceGovernorSettingsTests`, `ScreenCheckpointTests` | Needs runtime subdomain sections and method/event table |
+| `specs/runtime-client-transport/README.md` | M10 client transport, M11 local client, M13 runtime-backed MCP transport | control/attachment fixtures, reconnect, event resume, backpressure, app/CLI/MCP shared-daemon E2E | Partial; production in-process supervisor path must be removed |
+| `specs/agent-adapter-contract/README.md` | M08-F001, M16-F001, M16-F002, M17-F001 agent fields | `ManifestAndRegionTests`, `GoldenScreenTests`, `ReducerTests`, `TrustDialogTests`, `AgentKindTests` | Needs golden-screen and readiness mapping |
+| `specs/llm-proxy/README.md` | M19-F001 plus Homie virtual-key proxy behavior | usage/pricing/token fixtures, remote raw-key denial | Partial; needs usage accounting mapping |
+| `specs/virtual-key-credentials/README.md` | M18-F001 credential boundary, M19-F001 provider custody, Homie-specific virtual key | remote node no-raw-key, issue/revoke/expired/scope-denied tests | Partial; must become mandatory security gate for remote/MCP/LLM |
+| `specs/session-context-store/README.md` | M05-F002, M17-F001 session context subset | `HistoryScannerTests`, transcript resume negative cases | Partial; needs transcript/history mapping |
+| `specs/storage-indexing/README.md` | M02-F002, M05-F002, M06-F001, M07-F001, M07-F002, M17-F001, M19-F001 | migration/idempotency, preferences, history, worktrees, artifacts, usage schema tests | Needs table-by-table schema/API inventory |
+| `specs/memory-controller/README.md` | Homie extension; supports M05/M19 context enrichment only | memory candidate lifecycle tests | Not Diri-blocking; mark as extension in PRDs |
+| `specs/task-controller/README.md` | Homie extension; supports M13/M12 orchestration handoff | task claim/block/handoff fixtures | Not Diri-blocking; define Beads boundary |
+| `specs/intent-orchestrator/README.md` | M12-F002, M13-F001, M13-F002 routing intent | MCP tool routing and lineage fixtures | Needs MCP lineage intent mapping |
+| `specs/observability/README.md` | M14-F002 event bus, M19-F001 usage telemetry, cross-cutting evidence | event schema, metrics failure, redaction whitelist tests | Needs safe field whitelist and Diri event mapping |
+| `specs/mcp-automation/README.md` | M04-F002, M07-F002, M12-F001, M12-F002, M13-F001, M13-F002 | `CommandGrammarTests`, MCP stdio transcript, lineage denied cases | Needs tool-by-tool contract |
+| `specs/remote-node-handoff/README.md` | M06-F002, M10-F002 remote, M11 remote client, M18-F001, M18-F002, M19-F002 fleet | `RemoteAccessTests`, `RemoteSpawnTests`, `PrefsSyncTests`, host repo locate fixtures | Needs node protocol/account/handoff matrix |
+| `specs/packaging-updater/README.md` | M20-F001, M20-F002 | updater trust/install/rollback, packaged launch, DMG, notarization, perf gates | Needs release pipeline gates |
+
+Cross-spec mandatory gates:
+
+- Any spec that touches provider credentials must reference `specs/virtual-key-credentials/README.md`.
+- Any spec that emits logs/events/reports must reference `specs/observability/README.md` safe field rules.
+- Any UI spec must include a Diri screenshot/interaction verification path.
+- Any runtime/client/CLI/MCP spec must include method/event/DTO mappings back to `specs/runtime-supervisor/README.md` and `specs/mcp-automation/README.md` where applicable.
 
 ## 编写要求
 

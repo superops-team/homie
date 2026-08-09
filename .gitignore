@@ -86,7 +86,9 @@ models.local.*
 homie.local.*
 
 # Local agent and LLM tool state
+.bingo/
 .codex/
+.loopx/
 .claude/
 .opencode/
 .openai/
@@ -95,6 +97,14 @@ homie.local.*
 !.agents/skills/
 !.agents/skills/*/
 !.agents/skills/*/SKILL.md
+
+# Reference/generated dependency checkouts
+/diri/
+
+# Compiler and script scratch output
+/librust_out.rmeta
+__pycache__/
+*.pyc
 
 # Logs, reports, and crash dumps
 *.log

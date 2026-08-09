@@ -90,19 +90,22 @@ V1 应优先复用成熟 crate，避免重复造轮子。推荐基线：
 - `serde`
 - `serde_json`
 - `tokio`
-- `futures-core`
+- `sha2`
 - `thiserror`
 
 原因：
 
-- V1 control channel 使用 newline-delimited JSON，serde 足够。
+- Wave 1A transport 使用 fixed binary frame header；control/event/stream metadata payload 使用 bounded Serde JSON，terminal payload 使用 raw binary。
 - client 需要 request correlation、watch/broadcast channel、reconnect/backoff。
+- daemon hello 使用 SHA-256 标识实际 executable。
 
 约束：
 
-- unknown enum/value lenient decode。
+- frame length、kind、flags、stream ownership、pending request 和 queue 都必须有硬上限。
+- unknown wire kind/version/flags 和损坏 payload fail closed；未来 control enum 只在 negotiated minor capability 内 additive decode。
 - error envelope 必须稳定。
 - protocol types 不依赖 app/runtime 实现。
+- 不为固定 frame codec 引入额外 RPC/codec crate；使用 Tokio I/O 和标准 byte conversion。
 
 ### 3.4 `homie-storage`
 
