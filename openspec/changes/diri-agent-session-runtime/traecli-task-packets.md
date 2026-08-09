@@ -727,10 +727,12 @@ S103-GREEN-02；T-103 只 git show 此 SHA，不 merge 当前 T-102 branch。
 - **Deadline:** active work `6h`；readiness `3s`；integration `120s`；cleanup `3s`
 - **Allowed direct write paths:**
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/src/agent_launch.rs`
+  - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/src/dispatcher.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/src/runtime_actor.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/src/lib.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/tests/manifest_spawn.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/tests/daemon_process.rs`
+  - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/tests/runtime_dispatcher.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-proto/src/lib.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-proto/src/model.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-proto/tests/protocol_contract.rs`
@@ -759,6 +761,8 @@ cd /Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime
 /opt/homebrew/bin/cargo test -p homie-agents
 /opt/homebrew/bin/cargo test -p homie-runtime --test manifest_spawn -- --test-threads=1 --nocapture
 /opt/homebrew/bin/cargo test -p homie-runtime --test daemon_process --no-run
+/opt/homebrew/bin/cargo test -p homie-runtime --lib dispatcher::tests::every_registered_handler_decodes_to_its_declared_execution_class -- --exact
+/opt/homebrew/bin/cargo test -p homie-runtime --test runtime_dispatcher
 /opt/homebrew/bin/cargo test -p homie-proto --test runtime_transport_contract
 /opt/homebrew/bin/cargo test -p homie-client --test typed_facade
 /usr/bin/git diff --check
@@ -795,9 +799,10 @@ storage conflict 退回 T-103 owner，resolved-contract conflict 退回 G3 owner
 /usr/bin/git diff --check
 任何失败都 blocked。T-102 不直接编辑 crates/homie-storage。
 
-允许直接写的文件仅为 agent_launch.rs、runtime_actor.rs、lib.rs、manifest_spawn.rs、
-daemon_process.rs，以及声明的 homie-proto/homie-client source/tests。daemon_process.rs
-仅可更新受 typed SessionSpawnRequest 影响的既有 request literal。其他路径 forbidden。
+允许直接写的文件仅为 agent_launch.rs、dispatcher.rs、runtime_actor.rs、lib.rs、
+manifest_spawn.rs、daemon_process.rs、runtime_dispatcher.rs，以及声明的 homie-proto/
+homie-client source/tests。dispatcher.rs、daemon_process.rs、runtime_dispatcher.rs 仅可更新
+受 typed SessionSpawnRequest 影响的既有 request literal。其他路径 forbidden。
 先运行 manifest_spawn 记录仍缺 actor integration 的 RED。最小实现 typed profile 或
 explicit shell selection；用 G3 contract resolve；在 launch 前调用已 merge 的 T-103
 repository freeze/hash/atomic bind/readback；真实 holder Stat readiness 后才 commit running
@@ -809,6 +814,8 @@ GREEN：
 /opt/homebrew/bin/cargo test -p homie-agents
 /opt/homebrew/bin/cargo test -p homie-runtime --test manifest_spawn -- --test-threads=1 --nocapture
 /opt/homebrew/bin/cargo test -p homie-runtime --test daemon_process --no-run
+/opt/homebrew/bin/cargo test -p homie-runtime --lib dispatcher::tests::every_registered_handler_decodes_to_its_declared_execution_class -- --exact
+/opt/homebrew/bin/cargo test -p homie-runtime --test runtime_dispatcher
 /opt/homebrew/bin/cargo test -p homie-proto --test runtime_transport_contract
 /opt/homebrew/bin/cargo test -p homie-client --test typed_facade
 /usr/bin/git diff --check
