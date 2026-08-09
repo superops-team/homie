@@ -15,8 +15,9 @@
 
 | 方向 | 组件 | 关系 |
 |------|------|------|
-| 上游 | `homie-cli` | 调用 storage health/migration 用于 `doctor` |
-| 上游 | `homie-runtime` | 后续读写 session/context |
+| 上游 | `homie-runtime` | production SQLite owner，按领域调用 typed repository |
+| 上游 | `homie-client` | 只接收 runtime service 的 safe DTO，不接触 storage/SQL |
+| 上游 | `homie-app`, `homie-cli` | 经 client/runtime service 读写 durable facts，不直接依赖 storage |
 | 上游 | `homie-llm` | 后续读写 provider/usage/virtual key |
 | 下游 | SQLite | 本地数据库文件 |
 | 下游 | output log files | 大流式输出文件，由 SQLite 索引 |
@@ -31,7 +32,8 @@
 - WAL 模式。
 - forward-only migration。
 - schema health check。
-- schema 约束测试。
+- typed repository、transaction、uniqueness 和 schema 约束测试。
+- runtime recovery、effective config、lineage/remote/update safe metadata 的 durable fact API。
 
 不负责：
 
@@ -40,6 +42,7 @@
 - LLM proxy 请求转发。
 - GPUI UI。
 - MCP server proxy。
+- 把 storage 中的 PID/status row 解释为 live process 证据。
 
 ## 5. 核心接口
 
@@ -70,9 +73,18 @@ impl Storage {
 }
 ```
 
+`Storage` 和 SQLite connection 是 runtime daemon/storage owner 的进程内实现接口。app、CLI
+和 wire contract 只能使用 safe DTO；不得看到 `Storage`、`Connection`、SQL 或 transaction。
+
 ## 6. 数据模型
 
-V1 schema version: `1`
+当前实现 schema version: `3`。
+
+- v1：核心 provider/profile/runtime/session/context/usage/task/config 表。
+- v2：history、project/worktree、settings、host/node/handoff 等 Diri inventory 表。
+- v3：session core metadata、usage scan cache/rollup 和相关索引。
+- v4：由 T-103 `diri-storage-core-facts` 定义的增量 migration；在实现和 evidence 完成前不得
+  写成已交付。
 
 核心表：
 
@@ -97,6 +109,8 @@ V1 schema version: `1`
 - `tasks`
 - `config_events`
 - `metrics_write_failures`
+- v2/v3 inventory: `preferences`、`projects`、`worktrees`、`history_entries`、
+  `usage_scan_files`、`usage_hourly_rollups`、`hosts`、`node_accounts`、`handoff_records`
 
 ## 7. 运行模型与状态机
 
@@ -127,7 +141,9 @@ Migration 是 forward-only。不存在 downgrade、fallback 或兼容旧 schema�
 - foreign keys enabled
 - journal mode
 
-CLI doctor 使用该输出生成 human/json report。
+Runtime owning service 将 safe health DTO 提供给 client；CLI doctor 只能通过该 service
+生成 human/json report。storage 无法启动时返回 stable unavailable diagnostic，不回退到
+CLI direct SQLite。
 
 ## 10. 失败与恢复
 
@@ -263,3 +279,77 @@ Scope rule: this component stores durable facts and exposes repository/query API
 - app crate dependency scan 证明不直接依赖 `homie-storage`。
 - runtime restart、history resume、usage incremental scan、handoff 和 updater recovery 都从 repository 恢复并通过 E2E。
 - raw key、Authorization、cookie、raw prompt、raw tool args/result 的 schema/fixture scan 为零。
+
+## 14. T-103 Storage Core Durable Facts 修订
+
+权威来源：
+
+- PRD:
+  `prd-spec/features/diri-storage-core-facts/2026-08-09-diri-storage-core-facts-design.md`
+- OpenSpec: `openspec/changes/diri-storage-core-facts/`
+- Bead: `homie-t3u.2`
+- Master task: `T-103`
+
+### 14.1 基线与 migration 合同
+
+- schema v3、v1 -> v3 ordered transaction migrations、`effective_agent_configs` 表、
+  session core metadata、history/project/worktree/usage repository 是已存在基线。
+- v4 只能追加到现有 migration 顺序，不重写历史 migration 语义。
+- v4 必须覆盖 empty DB、真实 v3 fixture、rollback-on-failure、幂等和 schema-too-new。
+- v4 DDL、backfill、index 和 migration version row 必须在同一 transaction。
+
+### 14.2 Service ownership
+
+- production SQLite 只由 runtime daemon actor/domain service 持有。
+- `homie-app` 和 `homie-cli` 不得包含 `homie-storage` normal dependency，也不得直接
+  `open_or_create`。
+- settings、health、usage summary、effective config 和 recovery diagnostics 经
+  `homie-client` typed method 调用 owning service。
+- v4 为 settings preference row 增加 monotonic revision；更新必须在同一 transaction
+  compare `expected_revision` 并递增，stale revision 不覆盖。
+- runtime checkpoint/optimize 通过 storage-owned `flush` API；consumer 不直接取得
+  `Storage::connection()`。
+- 测试可使用明确 test harness，但不能把 production public connection 当作 repository。
+
+### 14.3 Effective config 合同
+
+- 复用并增强现有 `effective_agent_configs`，增加 versioned safe runtime/LLM/permission
+  snapshots、deterministic hash 和 one-config-per-session 约束。
+- session/parent/config bind 具有单 transaction 语义；任一失败不得留下半创建 session 或
+  orphan config。
+- frozen config immutable；profile 后续变化不影响按 session readback。
+- `virtual_key_id` 只能作为引用；raw provider key、virtual key material、Authorization、
+  cookie 和 secret-bearing env 不得进入 snapshot。
+
+### 14.4 Runtime recovery 合同
+
+- `session_runtime_recovery` 每 session 一行，和现有 session output path/tail offset 联合
+  形成 typed recovery facts。
+- durable metadata 包括 holder instance/PID/start hints、output epoch、checkpoint
+  path/offset/content sequence、checkpointed event sequence、last runtime instance/status 和
+  timestamp。
+- terminal bytes、grid 和 checkpoint blob 留在文件系统，不写 SQLite。
+- PID/status/instance 都是 hint；runtime/T-102 必须重新验证 holder/process/output 后才能
+  发布 running。
+- recovery candidate query 必须稳定排序、有上限；多字段 assessment 原子提交。
+
+### 14.5 Lineage、remote 与 update foundation
+
+- `sessions.parent_session_id` 继续是 direct parent 唯一事实源；新增幂等 safe lineage audit，
+  不建第二套 parent graph。
+- 复用 `hosts`、`node_accounts`、`handoff_records`，为 handoff 补 operation/checkpoint/
+  phase/lease/manifest hash 和 typed CAS repository。
+- 新增 update receipt 保存 operation/version/phase/feed host/archive hash/bundle/team/path
+  refs/safe error；不保存 credential 或 payload。
+- 上述只证明 durable metadata foundation。remote transfer/resume、updater feed/install/
+  rollback 和 recursive lineage workflow 由后续 owner 完成。
+
+### 14.6 T-103 门禁
+
+- `homie-storage/src/lib.rs` 只有一个 implementation owner，所有 migration/repository edit
+  串行。
+- T-102 释放 shared proto/runtime 文件前只冻结 method/DTO，不并行修改 lifecycle 文件。
+- app/CLI dependency tree 和 source scan 必须证明 direct-storage 路径已删除。
+- storage/restart/service/security evidence 必须通过。
+- T-103 foundation 不单独关闭 UI、remote、usage、update、packaging 或 performance parity
+  rows。

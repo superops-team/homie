@@ -4,7 +4,7 @@
 > Source PRD: `prd-spec/features/diri-7ba3407-parity-rebaseline/2026-08-08-diri-7ba3407-parity-rebaseline-design.md`  
 > Beads: `homie-t3u`
 
-Section 1 is the executable checklist for this Wave 0 change and is complete. Sections 2-6 are program milestones owned by future child Beads; they intentionally remain unchecked and do not keep `homie-t3u` open. A milestone checkbox closes only when its child change has completed its own fine-grained `tasks.md` and evidence.
+Section 1 is the executable checklist for this Wave 0 change and is complete. T-101 已由 child Bead `homie-nep` 完成；Sections 2-6 中其余 program milestones 由独立 child Beads 承接，未完成项保持 unchecked 且不重新打开 `homie-t3u`。A milestone checkbox closes only when its child change has completed its own fine-grained `tasks.md` and evidence.
 
 ## 1. Wave 0: 重基线与规格门禁
 
@@ -19,9 +19,9 @@ Section 1 is the executable checklist for this Wave 0 change and is complete. Se
 
 ## 2. Wave 1: Runtime、Agent 与 Durable Facts
 
-- [ ] 2.1 T-101 创建并执行 `diri-runtime-daemon-client-transport`：独立 daemon、UDS control/data、endpoint client、reconnect、events resume、attachment/backpressure；RED 必须证明当前 embedded client 不能满足跨进程恢复
-- [ ] 2.2 T-102 创建并执行 `diri-agent-session-runtime`：manifest-driven spawn、holder adoption、process tree、resource governor、resume/migrate/shutdown；RED 必须复现当前 live PTY/holder `detached` 回归
-- [ ] 2.3 T-103 创建并执行 `diri-storage-core-facts`：service-owned repositories、runtime recovery facts、effective config、lineage/remote/update metadata；RED 必须证明 UI direct-storage 和缺失 migration 合同
+- [x] 2.1 T-101 创建并执行 `diri-runtime-daemon-client-transport`：实施 Bead `homie-nep` 已关闭；独立 daemon、UDS control/data、endpoint client、reconnect、events resume、attachment/backpressure 的证据位于 `docs/verification/diri-runtime-daemon-client-transport/`
+- [ ] 2.2 T-102 创建并执行 `diri-agent-session-runtime`：实施 Bead `homie-t3u.1`，依赖已关闭的 `homie-nep`；manifest-driven spawn、holder adoption、process tree、resource governor、resume/migrate/shutdown；checkpoint `48f522b` 的 RED 仅为 adoption 与 live PTY 两项 `detached != running`，`runtime_holder_stat_tracks_resize_and_log_offsets` 已通过
+- [ ] 2.3 T-103 创建并执行 `diri-storage-core-facts`：实施 Bead `homie-t3u.2`，依赖已关闭的 `homie-nep`；service-owned repositories、runtime recovery facts、effective config、lineage/remote/update metadata；RED 必须证明 UI direct-storage 和缺失 migration 合同
 
 ## 3. Wave 2: 本地桌面产品
 
@@ -52,9 +52,9 @@ Section 1 is the executable checklist for this Wave 0 change and is complete. Se
 | Task | Source requirement | Component specs | Required RED | Required GREEN | Evidence |
 |------|--------------------|-----------------|--------------|----------------|----------|
 | T-000 | FR-01, FR-16 | all amended specs | current status/OpenSpec/evidence inconsistencies | strict OpenSpec + 16-dimension review + alignment pass | `docs/verification/diri-7ba3407-parity-rebaseline/` |
-| T-101 | FR-02 | runtime-client-transport, runtime-supervisor, observability | production client embeds supervisor; no reconnect/attachment | app/CLI/MCP shared daemon restart and attachment recovery E2E | `docs/verification/diri-runtime-daemon-client-transport/` |
-| T-102 | FR-03, FR-04 | runtime-supervisor, agent-adapter, credentials | current PTY/holder tests return detached; spawn ignores manifest | fake/real agent spawn, holder crash/adopt, resume/migrate/resource/shutdown | `docs/verification/diri-agent-session-runtime/` |
-| T-103 | FR-05 | storage-indexing, runtime-supervisor | direct UI storage and missing durable recovery facts | transactional repositories/migrations and restart recovery | `docs/verification/diri-storage-core-facts/` |
+| T-101 | FR-02 | runtime-client-transport, runtime-supervisor, observability | production client embeds supervisor; no reconnect/attachment | app/CLI/MCP shared daemon restart and attachment recovery E2E | `homie-nep`（closed）；`docs/verification/diri-runtime-daemon-client-transport/` |
+| T-102 | FR-03, FR-04 | runtime-supervisor, agent-adapter, credentials | checkpoint `48f522b` 的 adoption/live PTY 两项测试返回 detached；spawn ignores manifest | fake/real agent spawn, holder crash/adopt, resume/migrate/resource/shutdown | `homie-t3u.1`（依赖 closed `homie-nep`）；`docs/verification/diri-agent-session-runtime/` |
+| T-103 | FR-05 | storage-indexing, runtime-supervisor | direct UI storage and missing durable recovery facts | transactional repositories/migrations and restart recovery | `homie-t3u.2`（依赖 closed `homie-nep`）；`docs/verification/diri-storage-core-facts/` |
 | T-201 | FR-06 | desktop-shell, runtime-client-transport | pin/archive/local fake state and incomplete workbench | persisted typed actions, reconnect and real screenshot/interaction | `docs/verification/diri-desktop-workbench-sidebar/` |
 | T-202 | FR-07 | desktop-shell, runtime-supervisor | source-text test and incomplete live terminal behavior | live PTY terminal interaction, row fetch, visual/perf gates | `docs/verification/diri-terminal-interaction/` |
 | T-203 | FR-08 | desktop-shell, storage-indexing | session-only Quick Open and preference-only native controls | file index/navigation/settings/native action E2E | `docs/verification/diri-navigation-settings-native/` |
@@ -70,6 +70,7 @@ Section 1 is the executable checklist for this Wave 0 change and is complete. Se
 ## 8. Execution Rules
 
 - 每个未勾选的实现任务必须先创建独立 child PRD/OpenSpec，master task 不授权直接编码。
+- `homie-h7n.*` 仅作为历史需求来源，不得继续作为任何新实施任务的 owner。
 - 每个 child task 继续拆成单次会话可完成的 RED、GREEN、REFACTOR、EVIDENCE steps。
 - 外部依赖先用 local stub/fake；真实 provider/remote/release credential 只用于最终 smoke。
 - 任何任务发现新的 Diri capability 时，先更新 matrix、PRD/spec 和 alignment，再实现。

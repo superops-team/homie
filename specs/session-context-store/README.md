@@ -18,9 +18,9 @@
 | 方向 | 组件 | 关系 |
 |------|------|------|
 | 上游 | `homie-runtime` | 写入 session events、lineage、artifact refs |
-| 上游 | `homie-app` | 读取 summary 和 inspector projection |
+| 上游 | `homie-app` | 经 client/runtime service 读取 summary 和 inspector projection |
 | 上游 | `homie-task`, `homie-memory` | 绑定 task/memory references |
-| 下游 | `homie-storage` | 持久化 context events and summaries |
+| 下游 | `homie-storage` | 由 runtime owning service 持久化 context events and summaries |
 
 ## 4. 职责边界
 
@@ -40,6 +40,8 @@
 - 长期 memory 检索排序。
 - task 状态机。
 - provider credential。
+- runtime holder/process live 状态判定。
+- remote handoff 和 updater 工作流。
 
 ## 5. 核心接口
 
@@ -77,6 +79,8 @@ Gap-closure session/output semantics:
 - Context 只可引用 output log offset、tail offset、status、title、cwd、agent kind、safe artifact summary 等安全摘要。
 - Spawn 失败时不得创建 context root 或留下 `created` 状态 summary；失败证据只记录 safe error code。
 - Runtime restart 后，如果 live PTY 不存在，context/history 可继续读取历史 output 摘要，但 live input 操作必须返回明确不可用状态。
+- `sessions.parent_session_id` 是 direct parent 的唯一事实源；context 不维护第二套 parent graph。
+- durable recovery row 中的 PID/status/instance 是恢复提示，不是 context 可声明 live 的证据。
 
 ## 7. 运行模型与状态机
 
@@ -161,3 +165,64 @@ Rules:
 - runtime spawn -> context events -> MCP lineage -> UI/CLI summary 真实 E2E。
 - failed spawn、duplicate event、redaction failure 和 storage failure 的一致性测试。
 - raw key、Authorization、raw prompt、raw output、完整 tool args/result 的 context fixture scan 为零。
+
+## 13. T-103 Durable Lineage Foundation 修订
+
+权威来源：
+
+- PRD:
+  `prd-spec/features/diri-storage-core-facts/2026-08-09-diri-storage-core-facts-design.md`
+- OpenSpec: `openspec/changes/diri-storage-core-facts/`
+- Bead: `homie-t3u.2`
+- Master task: `T-103`
+
+### 13.1 事实 ownership
+
+- runtime/context domain service 是 durable context/lineage repository 的 production owner；
+  app、CLI 和 MCP adapter 不直接打开 storage。
+- `sessions.parent_session_id` 继续作为 direct parent 单一事实源。parent、children、
+  context summary 和后续 MCP lineage projection 必须从同一关系事实读取。
+- session、parent 关系和 frozen effective config 创建必须具备单 transaction 语义；失败
+  不得留下半创建 context root、orphan config 或不一致 lineage。
+- full recursive authorization、`summarize_children`、`report_to_parent` 和 UI inspector E2E
+  仍由后续 change 完成；T-103 只提供 durable foundation。
+
+### 13.2 Safe lineage audit
+
+Lineage audit 至少包含：
+
+- 唯一 operation id；
+- actor session/service identity；
+- subject session；
+- relation/action；
+- decision；
+- safe reason code；
+- created timestamp。
+
+重复 operation id 必须幂等返回原结果或 stable conflict，不得重复追加。audit 禁止保存 raw
+prompt/output、完整 tool args/result、provider key、virtual key material、Authorization 或
+cookie。
+
+### 13.3 Durable event/provenance 规则
+
+- context event 和 lineage audit 必须具有 stable id/source reference，支持 duplicate
+  rejection 和 gap 检测。
+- output/checkpoint 只以 path/hash/offset/epoch/sequence safe reference 进入 context
+  projection；terminal bytes、grid 和 checkpoint blob 不复制到 context。
+- recovery 完成后，context projection 只消费 runtime 已验证并提交的 authoritative
+  assessment，不直接把 storage 的 `last_observed_status` 投影为 running。
+- projection rebuild 必须处理 unknown event/snapshot version、corrupt safe JSON、
+  duplicate operation 和缺失 parent，均 fail closed。
+
+### 13.4 验收边界
+
+T-103 必须验证：
+
+- parent/children repository 一致；
+- lineage audit operation id 幂等；
+- session/parent/effective config 原子提交；
+- restart 后 safe lineage/context facts 可读；
+- sensitive fixture scan 为零。
+
+这些验证不单独证明 MCP lineage workflow、UI inspector/history、remote handoff 或完整
+context/task/memory 产品接线完成；本组件状态继续保持 `partial`，直到对应 E2E 通过。

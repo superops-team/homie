@@ -102,7 +102,7 @@ Rules:
 - Full status manifests must declare at least one detection rule.
 - Process-only manifests may have an empty rules list.
 - `shell` and `generic` do not represent named agent binaries and must not appear in binary readiness probes.
-- Unknown agent ids use a conservative fallback: process authority, not first-class, no binary, no resume, no approve/deny quick action.
+- Unknown agent ids use a conservative fallback only for catalog/detection projection: process authority, not first-class, no binary, no resume, no approve/deny quick action. Production session spawn must reject that fallback and must not start a shell for an unknown agent.
 - Resume is valid only when the descriptor has `resume.style == latest`, or when an id source exists through `sessionIDFlag`, Claude hooks, or Codex notify.
 
 Agent profile fields:
@@ -293,3 +293,124 @@ Rules:
 - 至少两个可用真实 agent 通过 opt-in local smoke，smoke 不依赖真实 provider key。
 - approve/deny、hook/notify、subagent isolation 和 resume 进入 runtime/app/MCP 产品路径。
 - unavailable binary、disabled profile、invalid injection 和 revoked virtual key 全部 fail closed。
+
+## 17. T-102 Manifest-Driven Runtime 修订
+
+权威来源：
+
+- PRD: `prd-spec/features/diri-agent-session-runtime/2026-08-09-diri-agent-session-runtime-design.md`
+- OpenSpec: `openspec/changes/diri-agent-session-runtime/`
+- Beads: `homie-t3u.1`
+- Master task: T-102
+- Checkpoint: `48f522b`
+
+### 17.1 Catalog 与 Spawn 边界
+
+`homie-agents` 负责把 manifest/profile 投影为 agent-specific plan；`homie-runtime` 负责在
+holder-owned PTY 中执行该 plan。
+
+Production spawn 流程：
+
+```text
+explicit profile or explicit shell kind
+  -> enabled profile/runtime descriptor
+  -> strict bundled manifest
+  -> bounded readiness
+  -> absolute executable
+  -> sanitized env + manifest argv/injection
+  -> immutable EffectiveAgentConfig
+  -> structured holder launch
+```
+
+规则：
+
+- production 只读取固定 bundled descriptor source，不接受环境变量 manifest override。
+- readiness 只解析 executable，不执行 agent 本体。
+- readiness 必须得到 absolute executable regular file。
+- `shell` 是显式 kind；unknown/unavailable/disabled agent 不得 fallback 到 `/bin/sh`。
+- test catalog 只能通过 Rust constructor/fixture 注入，不得形成 daemon flag/test mode。
+- UI、CLI、MCP caller 不得自行拼 agent command。
+
+### 17.2 EffectiveAgentConfig
+
+每个 session 在 holder launch 前冻结：
+
+- profile/runtime/LLM/permission identifiers；
+- manifest id/version/status authority；
+- absolute executable 和 final argv；
+- sanitized env；
+- hook/notify/MCP injection decisions；
+- resume style/token；
+- cwd、parent 和 initial geometry。
+
+Running session 不随 profile/manifest edit 变化。Resume 必须读取 frozen config/launch record；
+缺失或不兼容时 fail closed，不得从 mutable profile 重建成不同 agent。
+
+若既有 storage 表无法完成 effective-config/session 原子 linkage，T-102 implementation 必须
+阻塞并请求 storage owner/spec 变更，不得私自增加 schema migration。
+
+### 17.3 Environment 与 Credential 边界
+
+- child env 从 reviewed baseline 构造，再应用 manifest env scrub 和 explicit values。
+- provider raw key、Authorization、cookie、已有 agent session credential 不得默认继承。
+- raw values 不得进入 holder argv、launch metadata、logs、events 或 evidence。
+- T-102 可以消费 credential owner 提供的 scoped virtual-key reference/local proxy input，
+  但不负责 issuance 或 provider forwarding。
+- 缺少 managed proxy input 时，不得发明 production key 或回退到真实 provider credential。
+
+### 17.4 Status Authority 与 Runtime Signal
+
+每个 live session 使用 frozen manifest 的 authority 创建一个 stateful reducer：
+
+```text
+ProcessReady/Exit
+PTY Output Activity
+Manifest Screen Observation
+Claude Hook
+Codex Notify
+User Input
+Tick
+  -> one StatusReducer
+  -> canonical status + needs-input + turn-complete
+```
+
+合同：
+
+- runtime 不得为每次 status read 新建固定 `ScreenPrimary` reducer。
+- screen detection 使用目标 `ManifestEngine`，不以 agent-agnostic phrase classifier 代替。
+- hook/notify parser 输出 allowlisted structured signal，不输出 caller-selected final status。
+- subagent event 不能覆盖 parent status/title/needs-input。
+- runtime 先持久化 reducer outcome，再发布 event。
+- raw hook/notify payload 不持久化。
+- daemon restart 可以清零 debounce counters，但必须用 holder live evidence 和 persisted
+  behavior/checkpoint 重建，不能用 storage row 伪造 running。
+
+### 17.5 Direct Resume
+
+- ID-based resume 需要 verified agent session id。
+- latest resume 只对 manifest 明确声明 `latest` 的 agent 有效。
+- resume 直接执行 manifest resume argv，不先启动 shell 再注入文本。
+- fresh spawn 有效的 hook/MCP injection 只有在 manifest 明确允许 resume 时才重放。
+- resume 保持 Homie session identity 和 frozen authority，并建立新 output epoch。
+- remote migration/handoff 不属于本组件 T-102 合同。
+
+### 17.6 Rollback 与完成门禁
+
+任一 readiness、effective config、injection、holder launch 或 child readiness 失败：
+
+```text
+terminate/reap launched fixture/session holder
+  -> remove live registry state
+  -> roll back uncommitted session/effective config
+  -> return stable redacted error
+```
+
+完成门禁：
+
+- 19 manifest strict decode 和现有 reducer/hook suites 保持 GREEN。
+- fake manifest 使用真实 executable、holder、PTY 验证 argv/env/output。
+- profile edit 不改变 running session。
+- unavailable/unknown/disabled/invalid config 全部 fail closed，无 shell fallback。
+- process/screen/hook/notify/input/tick 进入同一 reducer。
+- direct resume 和 restart reconstruction E2E 通过。
+- 无 production fake catalog、environment override、raw provider key 或 remote placeholder。

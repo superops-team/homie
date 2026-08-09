@@ -43,7 +43,7 @@
 Gap-closure 边界：
 
 - 本轮 `diri-engine-migration` 先交付本地 live PTY session registry、真实 shell spawn、PTY input、output log 和失败不落半成品 session。
-- 当前已具备最小 holder-equivalent：`homie-runtime-holder` 子进程拥有 PTY 和 output log，`RuntimeSupervisor` 重开后可通过 holder socket 重新 adopt live session，并能从 holder status 文件区分正常 `exited` 与异常 `detached`。holder terminate 已验证可清理脱离 root shell process group 的子进程。完整 Diri 级 holder manager、资源治理、崩溃矩阵和 protocol/client resume 仍需后续任务补齐。
+- 当前已具备最小 holder-equivalent：`homie-runtime-holder` 子进程拥有 PTY 和 output log，`RuntimeSupervisor` 重开后能发现 live holder 并加入 registry，也能从 holder status 文件区分正常 `exited` 与异常 `detached`。但 checkpoint `48f522b` 上 startup reconciliation 会把已 adoption 的 session projection 留在 `detached`，因此端到端 adoption 尚未完成。holder terminate 已验证可清理脱离 root shell process group 的子进程。完整 holder/resource/recovery 行为由 T-102 补齐。
 - Holder `Stat` 必须返回 child pid、状态、进程树规模、当前 geometry、epoch offset 和 log offset；client/protocol attach 可以用这些元数据判断可重放范围和当前终端尺寸。
 - Runtime attach snapshot 必须一次性组合 session metadata、holder stat、status report 和 offset replay，避免 client/protocol 未来自行拼装出不一致状态。
 - CLI snapshot 入口必须调用 runtime attach snapshot，而不能绕过 runtime 直接读 storage。
@@ -140,12 +140,12 @@ validate cwd/binary/permission
 | 场景 | 行为 |
 |------|------|
 | app 退出 | session 保持运行 |
-| runtime crash | holder-equivalent 保持 PTY/output，重启后 registry 恢复；当前实现已覆盖 supervisor drop/reopen adopt 和 detached child kill，完整 holder-manager/resource-governor 崩溃矩阵仍未完成 |
+| runtime crash | holder-equivalent 保持 PTY/output；当前能发现并注册 live holder，但 storage/protocol projection 仍可能错误保持 `detached`，T-102 必须完成一致 reconciliation；detached child kill 已覆盖 |
 | output log 写失败 | session 标记 degraded，继续保留 process 状态 |
 | event ring gap | client 重新请求 state snapshot |
 | remote host 不可达 | session spawn fail closed，已有 session 标记 unreachable |
 
-当前 gap-closure 已验证 holder 恢复路径：supervisor drop/reopen 后可 adopt live holder，正常 holder exit 恢复为 `exited`，缺失 holder/status 证据恢复为 `detached`，terminate 可清理脱组子进程。完整 Diri 级 holder-manager/resource-governor crash matrix 仍由 parity lock 后续项跟踪。
+当前 gap-closure 已验证 holder discovery、正常 holder exit -> `exited`、缺失 holder/status evidence -> `detached`、terminate 清理脱组子进程。它尚未验证 live holder adoption 后 registry、storage 和 protocol projection 一致；checkpoint `48f522b` 的两个生命周期测试仍得到 `detached != running`。完整 reconciliation、resource governor 和 crash matrix 由 T-102 跟踪。
 
 ## 11. 测试计划与验收引用
 
@@ -309,3 +309,111 @@ prepare_shutdown
 - git child 使用独立 process group，hard deadline 时终止整个 group 并回收；mutation 不自动重放或自动 prune。
 - 单 worker 串行所有 git jobs，Wave 1A 不增加 repo-key coordinator 或多个 blocking pools。
 - graceful shutdown 拒绝新 jobs，丢弃 queued/read-only jobs，并等待已启动 mutation 到 hard deadline。
+
+## 14. T-102 Agent Session Runtime 修订
+
+权威来源：
+
+- PRD: `prd-spec/features/diri-agent-session-runtime/2026-08-09-diri-agent-session-runtime-design.md`
+- OpenSpec: `openspec/changes/diri-agent-session-runtime/`
+- Beads: `homie-t3u.1`
+- Master task: T-102
+- Checkpoint: `48f522b`
+
+### 14.1 当前基线
+
+checkpoint `48f522b` 的 `session_lifecycle` 是 14 tests、12 passed、2 failed：
+
+- RED: `runtime_reopen_can_adopt_holder_and_continue_session`
+- RED: `runtime_spawn_shell_uses_live_pty`
+- GREEN 回归门禁: `runtime_holder_stat_tracks_resize_and_log_offsets`
+
+前两个失败均为 `detached != running`。不得再把 holder stat 测试写成 RED blocker。
+
+### 14.2 Startup Reconciliation
+
+Runtime startup 必须逐 session 执行：
+
+```text
+read persisted facts
+  -> probe expected holder
+  -> classify live/stopped/exited/missing evidence
+  -> decide one reconciliation outcome
+  -> persist projection
+  -> insert live registry entry
+```
+
+禁止在 holder adoption 前对所有 `created|starting|running` row 执行 bulk detach。
+
+权威规则：
+
+- 成功的 expected-holder `Stat=running` 是本地 process/PTY live evidence。
+- storage row 是恢复输入，单独存在永远不能证明 running。
+- `created|starting|running|detached` + live holder -> adopt + running。
+- `idle|needs_input` + live holder -> adopt + 保留更具体行为状态。
+- `hibernated` + verified stopped tree -> adopt + hibernated。
+- explicit holder exit -> exited。
+- missing/unverifiable holder -> detached。
+- archived + unexpected live holder 是 recovery contradiction，不得静默标 running。
+
+Startup 完成后 live registry、storage projection、session list/status/snapshot 必须一致。
+
+### 14.3 Holder 与真实 PTY
+
+- holder 继续 sole-own PTY、child tree 和 output-log writer。
+- adoption 不得创建第二个 holder、child 或 writer，不得截断 output log。
+- holder launch 使用 structured argv/cwd/sanitized env/geometry，不使用 shell command string。
+- stat 保持 child、tree size、geometry、epoch offset、log offset 合同。
+- holder IPC 350ms、readiness 3s、STOP/CONT verification 2s、cleanup 3s。
+- process cleanup 使用 PID start-time，禁止全局 `pkill`。
+- 是否使用共享 holder manager 是实现细节；per-session holder 只要通过 crash/race/cleanup
+  matrix 即满足合同，不能为了形状 parity 重写已工作的 ownership。
+
+### 14.4 Status Runtime
+
+- 每个 live session 有一个由 frozen manifest authority 初始化的 reducer。
+- process、PTY output、manifest screen、hook、notify、user input、tick 和 exit 都进入同一
+  reducer。
+- status/snapshot read 只投影 canonical state，不得创建新 reducer 或重放完整输出改变状态。
+- reducer outcome 先持久化，再发布 status/needs-input/turn-complete event。
+- restart 使用 holder evidence 恢复 liveness，使用 persisted behavior/checkpoint 恢复状态；
+  storage status 不能独立恢复 running。
+
+### 14.5 Process Tree 与 Resource Governor
+
+- holder 负责 start-time-checked enumerate/STOP/CONT/TERM/KILL 和 tree/footprint sample。
+- STOP 必须验证；CONT 按 descendants/leaves 到 root 恢复。
+- terminate 使用 TERM+CONT，grace 后 KILL+CONT。
+- sample failure 是 unknown，不得误标 exited 或 kill。
+- 一个 daemon-level bounded governor 只自动 hibernate
+  `idle + unattached + unpinned + live` session。
+- starting、running、needs-input、attached、pinned session 不得自动 hibernate。
+- hibernate 使用 STOP 并保留 holder/PTY/output/session；wake 使用 CONT。
+- hibernated input fail closed；archive/kill 才 terminate tree。
+
+### 14.6 Resume、Migration 边界与 Shutdown
+
+- resume 使用 frozen manifest 的 ID/latest argv 直接启动，不得先启动 shell 再发送命令。
+- resume 保持 Homie session id、title、parent、profile、permission、output history，并建立新
+  output epoch。
+- 发现 live holder 时先 adoption，不得 duplicate relaunch。
+- unarchive 不自动 spawn；explicit resume 才启动。
+- T-102 只提供同机 checkpoint + same-session relaunch/resume substrate；不发布 remote
+  `session.migrate`、git/transcript transfer、move/fork 或 lease，RT-010 保持 partial。
+- prepare shutdown 拒绝新 lifecycle mutation、停止新 governor tick、bounded drain，并
+  flush reducer/needs-input/screen/output/event/WAL。
+- shutdown ACK 仍先于 teardown，graceful shutdown 不终止 live/hibernated holder。
+
+### 14.7 完成门禁
+
+- 两个当前 RED 不修改断言转 GREEN。
+- holder stat 测试保持 GREEN。
+- lifecycle 14/14，serial 连续 5 次无 flake/进程泄漏。
+- 每个真实进程 suite 测试前后记录 holder PID+start-time；RED assertion failure、panic、
+  timeout 和 success 都通过 panic-safe guard 回收 fixture process group，新增 holder 集合差
+  必须为空。进程名只用于观测，禁止按进程名 kill。
+- fake manifest executable 经 packaged daemon、真实 holder、真实 PTY 启动。
+- daemon SIGKILL/restart 后 adoption、storage/snapshot、input/output 一致。
+- hibernate/wake 保持 holder/child/PTY/offset identity。
+- direct resume、prepare/shutdown、exact fixture cleanup E2E 通过。
+- 无 fixed-shell agent fallback、production test mode/env override、remote placeholder。
