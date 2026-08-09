@@ -732,6 +732,7 @@ S103-GREEN-02；T-103 只 git show 此 SHA，不 merge 当前 T-102 branch。
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-runtime/tests/manifest_spawn.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-proto/src/lib.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-proto/src/model.rs`
+  - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-proto/tests/protocol_contract.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-proto/tests/runtime_transport_contract.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-client/src/client.rs`
   - `/Users/bytedance/workspace/github/homie-worktrees/diri-agent-session-runtime/crates/homie-client/src/lib.rs`
