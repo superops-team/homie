@@ -1,0 +1,54 @@
+Homie — third-party attributions
+==================================
+
+GPUI (https://github.com/zed-industries/zed)
+--------------------------------------------
+The GPUI crates used by Homie are pinned to a specific Zed revision. Crates
+marked Apache-2.0 by upstream remain under that license. Zed describes its
+repository as primarily GPL-3.0-or-later with Apache-2.0 components where
+marked; the dependency inventory is checked by `scripts/check-licenses.sh`.
+
+Homie replaces GPUI's disabled, no-op `ztracing` profiling surface with a small
+independent Apache-2.0 compatibility implementation in `homie/vendor/` so the
+unused GPL logging/profiling implementation is not linked into release builds.
+
+The vendored `gpui_macos` renderer is an Apache-2.0 component from the same
+pinned revision, with the local changes described in `homie/Cargo.toml`.
+
+herdr (https://github.com/herdrdev/herdr)
+-----------------------------------------
+Licensed under the Apache License, Version 2.0.
+A copy of the license is available at http://www.apache.org/licenses/LICENSE-2.0
+
+The screen-detection predicates in the following files are ADAPTED from
+herdr's TOML screen manifests (`src/detect/manifests/*.toml`):
+
+    Sources/HomieCore/Resources/manifests/amp.json
+    Sources/HomieCore/Resources/manifests/antigravity.json
+    Sources/HomieCore/Resources/manifests/copilot.json
+    Sources/HomieCore/Resources/manifests/devin.json
+    Sources/HomieCore/Resources/manifests/droid.json
+    Sources/HomieCore/Resources/manifests/grok.json
+    Sources/HomieCore/Resources/manifests/hermes.json
+    Sources/HomieCore/Resources/manifests/kilo.json
+    Sources/HomieCore/Resources/manifests/kimi.json
+    Sources/HomieCore/Resources/manifests/kiro.json
+    Sources/HomieCore/Resources/manifests/opencode.json
+    Sources/HomieCore/Resources/manifests/pi.json
+    Sources/HomieCore/Resources/manifests/qoder.json
+
+Changes made: the rules were translated from herdr's TOML rule schema into
+Homie's JSON predicate schema, re-prioritised for Homie's evaluator (which
+stops at the first matching rule by descending priority), restricted to the
+screen regions Homie implements, and paired with capture regions. Rules that
+depend on herdr-only regions (`top_non_empty_lines`, `after_last_horizontal_rule`,
+`after_last_prompt_marker`) were dropped rather than approximated.
+
+The `"agent"` capability blocks in those files — binaries, resume specs,
+session-id flags, approve/deny keystrokes, env hygiene, injection wiring — are
+Homie's own; herdr does not model most of them. Binary names and resume
+argv were cross-checked against herdr's `src/detect/mod.rs` and
+`src/agent_resume.rs`.
+
+The manifests for claude-code, codex, cursor, gemini, generic, and shell are
+Homie's own and predate this attribution.

@@ -19,6 +19,12 @@ release/
 *.rs.bk
 *.pdb
 
+# Swift build output
+.build/
+.build-*/
+.swiftpm/
+.skill-build/
+
 # Cargo local files
 # Keep Cargo.lock tracked for this desktop application.
 !Cargo.lock
@@ -91,15 +97,13 @@ homie.local.*
 .loopx/
 .claude/
 .opencode/
+.superpowers/
 .openai/
 .anthropic/
 .agents/*
 !.agents/skills/
 !.agents/skills/*/
 !.agents/skills/*/SKILL.md
-
-# Reference/generated dependency checkouts
-/diri/
 
 # Compiler and script scratch output
 /librust_out.rmeta
@@ -142,6 +146,9 @@ DerivedData/
 xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
+
+# Browser sidecar dependencies
+sidecar/node_modules/
 
 # Beads / Dolt local state
 .beads/

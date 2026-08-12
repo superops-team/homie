@@ -51,7 +51,7 @@ if [ ! -s "$tmp_file" ]; then
 fi
 
 secret_patterns='(-----BEGIN (RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY-----|ghp_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{80,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{32,}|sk-ant-[A-Za-z0-9_-]{32,}|xox[baprs]-[A-Za-z0-9-]{20,}|AIza[0-9A-Za-z_-]{35}|authorization[[:space:]]*:[[:space:]]*bearer[[:space:]]+[A-Za-z0-9._~+/-]{12,}|(api[_-]?key|secret|token|password|passwd|pwd|authorization|bearer)["'\'']?[[:space:]]*[:=][[:space:]]*["'\''][^"'\'']{12,})'
-placeholder_patterns='(<[^>]*(api[_-]?key|key|token|secret|password)[^>]*>|example|sample|dummy|placeholder|changeme|change-me|your_|test_|xxx|null|none)'
+placeholder_patterns='(<[^>]*(api[_-]?key|key|token|secret|password)[^>]*>|example|sample|dummy|placeholder|changeme|change-me|your_|test_|xxx|null|none|not-the-token|--[A-Za-z0-9][A-Za-z0-9_-]*|[$][{][A-Za-z0-9_]*(TOKEN|PASSWORD|SECRET|KEY)[A-Za-z0-9_]*[:-])'
 
 matches="$(grep -Eain "$secret_patterns" "$tmp_file" | grep -Eavi "$placeholder_patterns" || true)"
 

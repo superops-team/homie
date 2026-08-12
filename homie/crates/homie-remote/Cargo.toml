@@ -1,0 +1,26 @@
+[package]
+name = "homie-remote"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+homie-proto.workspace = true
+homie-pty.workspace = true
+homie-terminal-state.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[build-dependencies]
+sha2.workspace = true
+
+[dev-dependencies]
+homie-engine = { path = "../homie-engine" }
+tempfile.workspace = true
