@@ -63,17 +63,15 @@ Two processes, one wire protocol:
 - **`homie`** — the desktop app: Rust + [GPUI](https://github.com/zed-industries/zed). Owns the
   window, sidebar, terminal renderer, command palette, and usage accounting. Lives in
   [`homie/`](homie/).
-- **`homied`** — a headless Swift daemon, launched by the app and outliving it. Owns PTYs and
+- **`homied-rs`** — a headless Rust Engine, launched by the app and outliving it. Owns PTYs and
   child agent processes, an offset-addressed output log per session (for detach and replay), a
   headless terminal emulator for status detection, the session registry and persistence,
   worktrees, and the control socket.
 
 `homie` is a small CLI: the MCP shim injected into agents, the hook and notify forwarders, and
-`status`/`doctor`. `homied-holder` owns the PTY master so sessions survive a daemon restart.
-
-> **A Rust port of the engine is in progress** in `homie/crates/homie-engine`, so that homie can run
-> on Linux and Windows. It is not shipped — the released app runs the Swift daemon above. See
-> [`homie/PORT.md`](homie/PORT.md) for what is done and what is left.
+`status`/`doctor`. `homie-holder` owns the PTY master so sessions survive an Engine restart.
+All background process supervision is Rust-owned; Swift code is limited to shared protocol/CLI
+support and platform glue where it is still needed.
 
 ## Adding an agent
 
@@ -90,9 +88,9 @@ command-line tools. The first Rust build compiles GPUI from a pinned Zed revisio
 while.
 
 ```sh
-swift build && swift test                  # engine
-(cd homie && cargo build)                   # app
-(cd homie && cargo run -p homie-app)         # run the app from source
+swift build                                # Swift CLI/protocol support
+(cd homie && cargo build)                  # Rust app + Engine
+(cd homie && cargo run -p homie-app)        # run the app from source
 
 homie/scripts/package.sh                    # full bundle
 homie/scripts/install-local.sh

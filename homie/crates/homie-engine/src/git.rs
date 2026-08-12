@@ -6,7 +6,7 @@
 //! per second is a cost worth not paying. Worktree operations do shell out —
 //! they are rare, and reimplementing `git worktree` would be reckless.
 //!
-//! Ported from the Swift `HomieGit`.
+//! Ported from the previous Git helper.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

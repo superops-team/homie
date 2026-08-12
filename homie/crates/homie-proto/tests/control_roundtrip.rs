@@ -370,7 +370,7 @@ fn session_record_host_field_is_wire_compatible() {
     typed_round_trip(&record);
 }
 
-/// The subscribe filter is a wire contract with a Swift daemon, and the exact
+/// The subscribe filter is a wire contract with the Engine, and the exact
 /// key names are what makes it take effect. A daemon that predates the filter
 /// ignores unknown keys and streams everything, so a mis-spelled key fails
 /// OPEN — the client keeps working while quietly paying the full firehose

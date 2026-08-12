@@ -4,8 +4,8 @@ import Foundation
 ///
 /// One JSON file per agent under `Resources/manifests/`, each carrying an
 /// `"agent"` descriptor block (what this type reads) plus the detection `rules`
-/// (which `HomieDetection.ManifestEngine` reads from the same files). Both
-/// halves live in one file so "add an agent" stays one file drop.
+/// (which the Rust Engine reads from the same files). Both halves live in one
+/// file so "add an agent" stays one file drop.
 ///
 /// The catalog is process-wide and immutable after first use: descriptors feed
 /// `AgentKind.displayName` / `isFirstClass`, which are read from every actor in
@@ -79,7 +79,7 @@ public struct AgentCatalog: Sendable {
     }
 
     /// Manifest files in load order: bundled first, then user overrides (which
-    /// replace a bundled agent of the same id). Also what HomieDetection
+    /// replace a bundled agent of the same id). Also what the Rust Engine
     /// walks for detection rules, so both halves of a file always agree.
     public static func manifestURLs(overridesDirectory: URL? = overridesDirectory) -> [URL] {
         var urls: [URL] = []

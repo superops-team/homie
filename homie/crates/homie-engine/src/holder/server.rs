@@ -333,7 +333,7 @@ fn handle(shared: &Shared, request: &HolderRequest) -> HolderResult<HolderRespon
     }
 }
 
-/// Writes with the same bounded semantics the Swift holder used: retry
+/// Writes with the same bounded semantics the reference holder used: retry
 /// `EINTR`/`EAGAIN`, waiting for the child to drain, but give up if the PTY
 /// stays unwritable for a full second.
 fn write_pty(shared: &Shared, data: &[u8]) -> HolderResult<()> {

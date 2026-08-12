@@ -22,7 +22,7 @@ use homie_proto::{ControlMessage, HelloParams, HelloResult, Method, RUST_ENGINE_
 use sha2::{Digest, Sha256};
 
 /// Explicit development/test override pointing at an Engine executable.
-const ENV_DAEMON_PATH: &str = "HOMIED_PATH";
+const ENV_ENGINE_PATH: &str = "HOMIE_ENGINE_PATH";
 
 const BOOT_LOG_FILE_NAME: &str = "homied-rs.boot.log";
 
@@ -269,7 +269,7 @@ fn control_request(
 /// Resolve the Rust Engine executable to launch, using the live process layout.
 pub fn resolve_daemon_path() -> Option<PathBuf> {
     resolve_daemon_path_from(
-        std::env::var_os(ENV_DAEMON_PATH).map(PathBuf::from),
+        std::env::var_os(ENV_ENGINE_PATH).map(PathBuf::from),
         std::env::current_exe().ok(),
         std::env::current_dir().ok(),
     )
@@ -279,7 +279,7 @@ pub fn resolve_daemon_path() -> Option<PathBuf> {
 /// real `homie.app`.
 ///
 /// Search order (first executable wins):
-///   1. `HOMIED_PATH` override (dev/tests).
+///   1. `HOMIE_ENGINE_PATH` override (dev/tests).
 ///   2. Bundled: `Contents/MacOS/homie` → `../Resources/bin/homied-rs`.
 ///   3. Next to the executable (loose dev copy).
 ///   4. Cargo build outputs under the working dir: `target/{release,debug}/homied-rs`.

@@ -4,13 +4,11 @@ For first-party VPS execution, per-node Claude/Codex accounts, fleet usage,
 and transactional local↔cloud handoff, see [NODE.md](NODE.md).
 
 `homie` is the Rust + GPUI desktop app, shipped self-contained: the app bundle
-carries the daemon (`homied`), the session holders that keep agents alive
+carries the Rust Engine (`homied-rs`), the session holders that keep agents alive
 across daemon restarts and upgrades, the `homie` CLI, and the MCP proxy. The
 workspace holds the protocol/client core, the session engine, terminal
 renderer, shared design system, session store, usage accounting, and
-window/sidebar shell. [`PLAN.md`](PLAN.md) is the historical record of the
-port from the retired Swift client, kept for its architecture and coexistence
-notes.
+window/sidebar shell.
 
 ## Engine
 
@@ -18,18 +16,11 @@ Sessions are owned by *holder* processes, not the daemon: the daemon can
 crash, upgrade, or be swapped out and every live agent keeps running, to be
 adopted by whatever daemon starts next.
 
-Two daemons ship in the bundle. `homied` (Swift) is the default.
-`homied-rs` is the cross-platform Rust engine
-([`crates/homie-engine`](crates/homie-engine)) — same socket, same wire
-protocol, same on-disk state, same holders, so flipping between them never
-loses a session. Opt a machine in with:
-
-```sh
-HOMIED_PATH=/Applications/homie.app/Contents/Resources/bin/homied-rs open -a homie
-```
-
-[`PORT.md`](PORT.md) tracks the port layer by layer, including the remaining
-gaps that keep the Swift daemon the default for now.
+`homied-rs` is the cross-platform Rust Engine
+([`crates/homie-engine`](crates/homie-engine)). It is the only daemon and
+process supervisor: it owns local and remote session orchestration, holders,
+PTYs, status detection, resource governance, browser sidecars, and background
+process lifecycle.
 
 ## Install
 

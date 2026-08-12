@@ -51,7 +51,7 @@ fn a_child_runs_and_its_output_arrives_on_the_master() {
 #[test]
 fn the_child_gets_only_the_environment_it_was_given() {
     // A daemon's own environment must not leak: an inherited NO_COLOR is what
-    // silently monochromed agent output in the Swift daemon.
+    // silently monochromed agent output in earlier daemon implementations.
     unsafe { std::env::set_var("NO_COLOR", "1") };
 
     let spec = PtySpec::new(

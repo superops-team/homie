@@ -1,5 +1,5 @@
 //! Durable screen checkpoints: `<id>.screen.plist`, byte-compatible with
-//! `Sources/HomieDaemonKit/ScreenCheckpoint.swift`.
+//! `Sources/previous implementation/ScreenCheckpoint.swift`.
 //!
 //! A checkpoint pairs an RLE-encoded full grid with the exact raw-log offset
 //! it represents, so a restarted daemon can seed the emulator from a few
@@ -10,7 +10,7 @@
 //! malformed, stale, or future-version file is ignored and the bounded
 //! raw-log replay runs instead. The on-disk format is a property list
 //! (Swift writes binary; either flavor is read) with the exact keys the
-//! Swift daemon uses, so a Rust daemon adopting a Swift-spawned fleet
+//! reference implementation uses, so a Rust daemon adopting a reference-spawned fleet
 //! restores from Swift's checkpoints, and a rollback reads ours.
 
 use std::path::Path;
@@ -192,7 +192,7 @@ mod tests {
             "PropertyListEncoder parity means binary plist"
         );
         // Apple's own parser must accept what we write — that is the
-        // rollback direction (a Swift daemon adopting Rust-written state).
+        // rollback direction (a reference implementation adopting Rust-written state).
         let lint = std::process::Command::new("plutil")
             .arg("-lint")
             .arg(&path)

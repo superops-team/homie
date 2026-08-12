@@ -16,16 +16,18 @@ Later builds are incremental.
 
 ## The two halves
 
-homie is one app made of two codebases, and which one you touch depends on what
-you are changing:
+homie is one app made of two codebases, with one Rust-owned background process
+manager:
 
-- **`homie/`** — the Rust + GPUI desktop app. Window, sidebar, terminal
-  rendering, command palette, usage accounting.
-- **`Sources/`** — the Swift engine. `homied` owns the PTYs and child agent
-  processes so sessions outlive the app; `homie` is the CLI and MCP shim.
+- **`homie/`** — the Rust + GPUI desktop app and Rust Engine. The Rust Engine
+  owns PTYs, holders, child agent processes, remote helpers, status detection,
+  resource governance, and process supervision.
+- **`Sources/`** — Swift CLI/protocol support. Swift does not own daemon,
+  holder, or background process supervision.
 
-They talk over a Unix socket. The app never owns a session directly — if you are
-changing what a session *does*, you are probably in `Sources/`.
+The app talks to the Rust Engine over a Unix socket. The app never owns a
+session directly — if you are changing what a session *does*, you are probably
+in `homie/crates/homie-engine`.
 
 ## Build and test
 
@@ -43,8 +45,8 @@ dependencies have been fetched once.
 To run one half while iterating:
 
 ```sh
-swift build && swift test          # engine
-(cd homie && cargo build && cargo test)   # app
+swift build                        # Swift CLI/protocol support
+(cd homie && cargo build && cargo test)   # Rust app + Engine
 ```
 
 Before opening a pull request, run what CI runs:

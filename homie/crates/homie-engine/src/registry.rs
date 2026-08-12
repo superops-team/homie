@@ -53,7 +53,7 @@ pub struct Registry {
     last_persist: Option<std::time::Instant>,
 }
 
-/// How long consecutive persists coalesce. Matches the Swift daemon's
+/// How long consecutive persists coalesce. Matches the reference implementation's
 /// `PersistenceStore` debounce.
 const PERSIST_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -250,7 +250,7 @@ impl Registry {
     /// Adopts every still-live holder-owned session found under
     /// `holder.holders_dir` that has a persisted record. Call after [`load`]:
     /// this is what makes sessions survive a daemon restart — or the switch
-    /// from the Swift daemon to this one.
+    /// from the reference implementation to this one.
     ///
     /// Returns the ids adopted. Local sessions whose holder did not survive
     /// are reconciled to `Exited` by [`reap_orphans`], so a record can never
@@ -690,7 +690,7 @@ impl Registry {
 
     /// Folds a governor sample into the record; returns the event to publish
     /// when anything actually changed (carrying only the changed facets, as
-    /// the Swift daemon does).
+    /// the reference implementation does).
     pub fn apply_resource_sample(
         &mut self,
         id: &str,
@@ -1038,7 +1038,7 @@ mod tests {
         registry.records.insert("s_1".into(), record("s_1"));
         registry.persist().expect("persist");
 
-        // The shape on disk is what the Swift daemon expects.
+        // The shape on disk is what the reference implementation expects.
         let raw: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&state_file).expect("read")).expect("parse");
         assert_eq!(raw["version"], 1);
@@ -1268,7 +1268,7 @@ mod tests {
         );
     }
 
-    /// Interop against the state file the Swift daemon actually maintains.
+    /// Interop against the state file the reference implementation actually maintains.
     ///
     /// Ignored by default because it needs a real one. Point
     /// `HOMIE_INTEROP_STATE` at a **copy** — never at the live file, which the
@@ -1303,7 +1303,7 @@ mod tests {
             "every session record should survive the round trip"
         );
 
-        // Writing it back must not lose anything the Swift daemon owns.
+        // Writing it back must not lose anything the reference implementation owns.
         registry.persist().expect("persist");
         let rewritten: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&working).expect("read")).expect("parse");

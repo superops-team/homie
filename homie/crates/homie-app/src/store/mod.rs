@@ -101,6 +101,7 @@ pub enum StoreEffect {
         id: SessionId,
         title: String,
     },
+    RefreshAgentCatalog,
     Spawn(SessionSpawnParams),
     /// A shell owned by a workbench pane. Unlike a top-level spawn, its
     /// response must not replace the selected sidebar session.
@@ -335,6 +336,10 @@ impl SessionStore {
     /// Installs the agent catalog fetched on connect.
     pub fn set_agent_catalog(&mut self, agents: AgentReadinessResult) {
         self.agents = agents;
+    }
+
+    pub fn refresh_agent_catalog(&self) {
+        self.emit(StoreEffect::RefreshAgentCatalog);
     }
 
     pub fn agent_catalog(&self) -> &AgentReadinessResult {
@@ -2270,6 +2275,16 @@ async fn run_effects(
             StoreEffect::Archive(id) => client.archive(&id).await,
             StoreEffect::Unarchive(id) => client.unarchive(&id).await,
             StoreEffect::Rename { id, title } => client.rename(&id, title).await,
+            StoreEffect::RefreshAgentCatalog => {
+                let _ = client.refresh_environment_path().await;
+                if let Ok(agents) = client.agent_readiness().await {
+                    store
+                        .write()
+                        .expect("session store lock poisoned")
+                        .set_agent_catalog(agents);
+                }
+                Ok(())
+            }
             StoreEffect::Spawn(params) => match client.spawn(params).await {
                 Ok(id) => {
                     // The authoritative record still arrives through session.updated.

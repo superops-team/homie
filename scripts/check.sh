@@ -37,7 +37,7 @@ bash -n "${root}"/scripts/*.sh "${root}"/homie/scripts/*.sh
 bash "${root}/homie/scripts/test-publish-github-release.sh"
 bash "${root}/homie/scripts/test-publish-homebrew-cask.sh"
 
-echo "==> Swift engine"
+echo "==> Swift CLI/protocol support"
 swift test --package-path "${root}" --no-parallel
 
 echo "==> Rust app"

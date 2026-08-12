@@ -355,7 +355,7 @@ impl Drop for EventStream {
 
 /// Whether `status` satisfies an `events.wait` target. The alias table
 /// ("done" ⇒ idle, "needs_me"/"needs-input"/"blocked" ⇒ needsInput) is the
-/// Swift daemon's, so every caller resolves the same vocabulary.
+/// reference implementation's, so every caller resolves the same vocabulary.
 pub fn satisfies_wait_target(status: &homie_proto::SessionStatus, target: &str) -> bool {
     use homie_proto::SessionStatus as S;
     match target {
@@ -372,7 +372,7 @@ pub fn satisfies_wait_target(status: &homie_proto::SessionStatus, target: &str) 
 }
 
 /// Publishes `session.updated` whenever a live session's observable state
-/// changes, by diffing registry views on a short cadence. The Swift daemon
+/// changes, by diffing registry views on a short cadence. The reference implementation
 /// publishes at each mutation site inside its status engine; this engine's
 /// state changes on pump threads, so a watcher is the equivalent seam.
 pub fn spawn_registry_watcher(

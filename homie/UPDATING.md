@@ -1,11 +1,11 @@
 # homie's auto-updater
 
-homie updates itself. It does **not** use Sparkle — that framework is Swift-side
-and the Swift app's appcast carries EdDSA signatures tied to a keypair a Rust
-binary has no way to use. homie ships its own updater in `crates/homie-updater`,
+homie updates itself. It does **not** use Sparkle: the previous updater used an
+appcast with EdDSA signatures tied to a keypair the Rust binary does not need.
+homie ships its own updater in `crates/homie-updater`,
 reading a JSON feed published with each GitHub Release.
 
-| | Homie (Swift) | homie (Rust) |
+| | Previous updater | homie |
 |---|---|---|
 | Client | Sparkle | `homie-updater` |
 | Feed | `/appcast.xml` | `appcast.json`, a release asset |
@@ -30,7 +30,7 @@ only if all of the following hold:
 Plus, at the feed layer: only strictly-newer versions are ever offered
 (no downgrades), and downloads are pinned to the releases host over HTTPS.
 
-The retired Swift app used Sparkle, whose cost was a private EdDSA key — lose it
+The previous updater used Sparkle, whose cost was a private EdDSA key — lose it
 and every install is stranded until people redownload by hand. This design has
 no such key. The Developer ID certificate is already load-bearing for shipping
 at all, so it is the one secret that cannot be lost without noticing.
@@ -87,7 +87,7 @@ homie/scripts/release.sh 0.4.1
 
 The script refuses to release a version that does not match the manifest, a
 dirty checkout, or a commit other than the current `origin/main`. It runs
-clippy + tests, builds a universal binary, bundles the Swift daemon, signs it,
+clippy + tests, builds a universal binary, bundles the Rust Engine, signs it,
 **notarizes and staples the .app first**, then builds and notarizes the DMG
 from that stapled bundle, produces the update zip, rebuilds `appcast.json` from
 the currently published feed, generates `SHA256SUMS` and a reviewed dependency
@@ -113,15 +113,15 @@ Release notes come from `dist/notes-<version>.md`. The script writes a default
 one if it is missing, so writing that file first — and re-running — is how you
 customize them.
 
-### The bundled daemon does not update with the app
+### The bundled Engine does not update with the app
 
-`homie.app` carries `homied` + `homied-holder` in `Contents/Resources/bin`,
+`homie.app` carries `homied-rs` + `homie-holder` in `Contents/Resources/bin`,
 and the update zip carries them too — but `daemon_launch` is launch-only by
-design (PLAN.md §3.1: never restart a live daemon, to avoid ping-pong with a
-still-installed `Homie.app`). After a self-update the *old* daemon keeps
-running from the replaced bundle, so a release that changes `homied` does not
-take effect until that daemon is restarted by other means. The app half updates
-immediately; the daemon half waits.
+design: never restart a live daemon while it still owns sessions. After a
+self-update the *old* Engine keeps running from the replaced bundle, so a
+release that changes `homied-rs` does not take effect until that Engine exits
+or is restarted by other means. The app half updates immediately; the Engine
+half waits.
 
 The canonical release tag is `v<version>`. `gh release create` creates that tag
 at the verified `origin/main` commit; do not create a second `homie-v<version>`

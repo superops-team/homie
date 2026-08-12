@@ -1,22 +1,21 @@
 //! The session engine: PTY ownership, output logging, and session state.
 //!
-//! This crate is the portable replacement for the Swift `HomieDaemonKit`
-//! stack. Everything here is written against the standard library and a thin
+//! This crate is Homie's daemon and process supervisor. Everything here is
+//! written against the standard library and a thin
 //! platform layer, so the parts that cannot be portable are visible as such
 //! rather than diffused through the codebase.
 //!
 //! # Porting rules
 //!
-//! - **On-disk and on-wire formats are load-bearing.** A log written by the
-//!   Swift holder must be readable here byte for byte, and vice versa, or a
-//!   user's live sessions cannot survive the switch. Formats are documented
-//!   where they are implemented and covered by tests that assert exact bytes.
+//! - **On-disk and on-wire formats are load-bearing.** A holder log must be
+//!   readable byte for byte across daemon restarts and upgrades. Formats are
+//!   documented where they are implemented and covered by tests that assert
+//!   exact bytes.
 //! - **Platform-specific code lives behind `cfg` and a named seam**, never
 //!   inline in logic. Unix is implemented; Windows is a gap with a defined
 //!   shape (see `pty`), not an unbounded rewrite.
-//! - **No dependency on the running Swift daemon.** This engine is additive:
-//!   it can be built and tested while the existing daemon keeps serving live
-//!   sessions.
+//! - **No alternate daemon path.** This Engine is the single owner of
+//!   background process supervision.
 
 pub mod agent;
 pub mod artifacts;
@@ -26,6 +25,7 @@ pub mod checkpoint;
 pub mod control;
 pub mod detect;
 pub mod directories;
+pub mod environment;
 pub mod events;
 pub mod git;
 pub mod governor;

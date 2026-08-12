@@ -8,7 +8,7 @@ use crate::model::{
 use serde::{Deserialize, Serialize};
 
 /// Stable control-plane identity of the authoritative Rust Engine. Clients
-/// use this additive Hello field to reject a protocol-compatible legacy daemon
+/// use this additive Hello field to reject a protocol-compatible non-Rust daemon
 /// instead of silently routing remote work around the Rust implementation.
 pub const RUST_ENGINE_KIND: &str = "homie-rust-engine";
 
@@ -50,6 +50,7 @@ impl Method {
     pub const CLIENT_SET_ACTIVE: &'static str = "client.set_active";
     pub const GOVERNOR_CONFIGURE: &'static str = "governor.configure";
     pub const AGENT_READINESS: &'static str = "agent.readiness";
+    pub const ENVIRONMENT_REFRESH_PATH: &'static str = "environment.refresh_path";
     pub const EVENTS_SUBSCRIBE: &'static str = "events.subscribe";
     pub const EVENTS_WAIT: &'static str = "events.wait";
     pub const HOOK_REPORT: &'static str = "hook.report";

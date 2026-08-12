@@ -67,7 +67,7 @@ pub fn write_json_line<T: Serialize>(stream: &mut impl Write, value: &T) -> Hold
 /// Raw rather than `UnixListener::incoming` because of teardown: macOS never
 /// wakes an `accept(2)` blocked on an AF_UNIX listener via `shutdown` alone —
 /// the fd must also be closed, which means the accept loop cannot hold a safe
-/// owner of it. The Swift holder shipped this exact shape.
+/// owner of it. The reference holder shipped this exact shape.
 pub fn accept_raw(
     listen_fd: i32,
     finished: impl Fn() -> bool,

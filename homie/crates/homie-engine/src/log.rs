@@ -9,7 +9,7 @@
 //! # File format
 //!
 //! This is a port of the Swift `OutputLog`, and the format is deliberately
-//! identical — a log written by the Swift holder must be readable here and
+//! identical — a log written by the reference holder must be readable here and
 //! vice versa, or switching engines would strand live sessions.
 //!
 //! ```text
@@ -604,7 +604,7 @@ mod tests {
         assert_eq!(data, b"-second");
     }
 
-    /// Interop against a log the Swift holder actually wrote.
+    /// Interop against a log the reference holder actually wrote.
     ///
     /// Ignored by default because it needs a real log. Point
     /// `HOMIE_INTEROP_LOG` at a **copy** of one — never at a live session's

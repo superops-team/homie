@@ -647,6 +647,11 @@ impl DaemonClient {
         self.no_params(Method::AGENT_READINESS).await
     }
 
+    pub async fn refresh_environment_path(&self) -> Result<(), ClientError> {
+        self.empty(Method::ENVIRONMENT_REFRESH_PATH, &EmptyParams {})
+            .await
+    }
+
     pub async fn hibernate(&self, session_id: &SessionId) -> Result<(), ClientError> {
         self.empty(Method::SESSION_HIBERNATE, &session_params(session_id))
             .await

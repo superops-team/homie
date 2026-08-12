@@ -39,19 +39,17 @@ fn main() {
         env!("CARGO_PKG_VERSION")
     );
 
-    // The app launches us with launchd's generic SHELL and minimal PATH.
-    // Normalize both from the user's account before any session snapshots the
-    // inherited environment: wrapped agents must return to the user's actual
-    // shell (fish/zsh/…), and that shell owns the current tool PATH.
-    let user_shell = login_shell();
-    // SAFETY: single-threaded startup, before any spawn.
-    unsafe { std::env::set_var("SHELL", &user_shell) };
-    if let Some(path) = login_path(&user_shell) {
-        // SAFETY: single-threaded startup, before any spawn.
-        unsafe { std::env::set_var("PATH", &path) };
-    }
-
     let app_support = app_support_dir();
+    // The app launches us with launchd's generic SHELL and minimal PATH. Set a
+    // silent startup baseline from account metadata/cache/fallback only. Do not
+    // execute the user's login shell here: interactive rc files can print,
+    // sleep, start background jobs, or prompt, all before the UI is usable.
+    let startup_env = homie_engine::environment::startup_environment(&app_support);
+    // SAFETY: single-threaded startup, before any spawn.
+    unsafe { std::env::set_var("SHELL", &startup_env.shell) };
+    // SAFETY: single-threaded startup, before any spawn.
+    unsafe { std::env::set_var("PATH", &startup_env.path) };
+
     for dir in ["logs", "holders", "inject", "bin"] {
         let _ = std::fs::create_dir_all(app_support.join(dir));
     }
@@ -191,65 +189,6 @@ fn main() {
             }
         }
     }
-}
-
-/// The user's real login shell from the user database. Authoritative even
-/// under launchd, where the SHELL env var is often /bin/zsh regardless of the
-/// user's configured shell (a fish user's PATH lives in config.fish, which
-/// zsh would never source).
-#[cfg(unix)]
-fn login_shell() -> String {
-    // SAFETY: getpwuid returns a pointer to a static per-thread record; it is
-    // read immediately and never retained.
-    unsafe {
-        let record = libc::getpwuid(libc::getuid());
-        if !record.is_null() {
-            let shell = std::ffi::CStr::from_ptr((*record).pw_shell);
-            if let Ok(shell) = shell.to_str()
-                && !shell.is_empty()
-                && Path::new(shell).exists()
-            {
-                return shell.to_owned();
-            }
-        }
-    }
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
-}
-
-/// Mirrors the Swift daemon's `LoginEnvironment`: `printenv PATH` prints the
-/// real colon-separated variable regardless of shell — fish stores $PATH as a
-/// space-separated list, so `echo $PATH` produces garbage there — and `-i -l`
-/// sources both interactive and login files, which is where agent PATHs are
-/// actually configured.
-#[cfg(unix)]
-fn login_path(shell: &str) -> Option<String> {
-    let fallback = || {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
-    };
-    let output = std::process::Command::new(shell)
-        .args(["-i", "-l", "-c", "printenv PATH"])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Interactive shells may print a greeting; take the last line that looks
-    // like a PATH.
-    let path = stdout
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| line.contains('/'))
-        .map(str::to_owned)?;
-    if path.is_empty() {
-        return Some(fallback());
-    }
-    // A single-entry answer smells like a broken profile: keep it, but append
-    // the standard locations so spawns still work.
-    Some(if path.contains(':') {
-        path
-    } else {
-        format!("{path}:{}", fallback())
-    })
 }
 
 #[cfg(unix)]

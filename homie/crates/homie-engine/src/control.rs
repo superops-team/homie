@@ -2,7 +2,7 @@
 //!
 //! This is the daemon's front door — what the app, the CLI and the MCP shim all
 //! talk to. The wire format is not ours to choose: `homie-client` already speaks
-//! it to the Swift daemon, so a Rust engine has to be indistinguishable on the
+//! it to the reference implementation, so a Rust engine has to be indistinguishable on the
 //! socket or every existing client breaks.
 //!
 //! What is implemented here is the core of that surface — handshake, list,
@@ -84,7 +84,7 @@ impl ControlServer {
     }
 
     /// Enables spawn-time hook/MCP injection: writes the shim files (like the
-    /// Swift daemon does at startup) and applies each manifest's mechanisms
+    /// reference implementation does at startup) and applies each manifest's mechanisms
     /// to future spawns.
     pub fn with_injection(mut self, config: InjectionConfig) -> Self {
         let _ = crate::inject::write_claude_hooks_file(&config.inject_dir);
@@ -116,7 +116,7 @@ impl ControlServer {
     }
 
     /// Where session output logs are written. Defaults to `logs/` beside the
-    /// socket, matching the Swift daemon's layout.
+    /// socket, matching the reference implementation's layout.
     pub fn with_logs_dir(mut self, logs_dir: impl Into<PathBuf>) -> Self {
         self.logs_dir = logs_dir.into();
         self
@@ -343,7 +343,7 @@ impl ControlServer {
     ///
     /// The write half is shared: after `events.subscribe`, a forwarder thread
     /// pushes event frames onto the same socket while this loop keeps
-    /// answering requests — one connection carries both, as the Swift daemon's
+    /// answering requests — one connection carries both, as the reference implementation's
     /// does.
     pub fn serve(&self, stream: UnixStream) -> std::io::Result<()> {
         let _connection = ActiveConnectionGuard::new(Arc::clone(&self.active_connections));
@@ -594,6 +594,7 @@ impl ControlServer {
             Method::SESSION_RESUME_FROM_HISTORY => self.session_resume_from_history(params),
             Method::SESSION_REOPEN_LAST => self.session_reopen_last(),
             Method::AGENT_READINESS => self.agent_readiness(),
+            Method::ENVIRONMENT_REFRESH_PATH => self.environment_refresh_path(),
             Method::PROJECT_ADD => self.project_add(params),
             Method::SESSION_READ_DIFF => self.session_read_diff(params),
             Method::SESSION_HIBERNATE => self.session_hibernate(params),
@@ -827,7 +828,7 @@ impl ControlServer {
             .into_iter()
             .find(|record| record.id.0 == id)
             .ok_or_else(|| ControlError::internal("the new session vanished"))?;
-        // SessionSpawnResult is the record itself, as the Swift daemon
+        // SessionSpawnResult is the record itself, as the reference implementation
         // answers — not wrapped.
         serde_json::to_value(&record).map_err(|error| ControlError::internal(error.to_string()))
     }
@@ -1471,7 +1472,7 @@ impl ControlServer {
     }
 
     /// `session.list` and `state.snapshot` are the same view: every record
-    /// plus the project list, exactly as the Swift daemon answers them.
+    /// plus the project list, exactly as the reference implementation answers them.
     fn session_list(&self) -> Result<JsonValue, ControlError> {
         let registry = self.registry.lock().map_err(poisoned)?;
         serde_json::to_value(json!({
@@ -1637,7 +1638,7 @@ impl ControlServer {
 
     /// A hook or notify callback from inside an agent session: the signal
     /// that makes hook-authority agents' status precise. Parsed by the same
-    /// rules the Swift daemon used, metadata folded into the record, signal
+    /// rules the reference implementation used, metadata folded into the record, signal
     /// fed to the session's reducer.
     fn hook_report(&self, params: Option<JsonValue>) -> Result<JsonValue, ControlError> {
         let p: homie_proto::HookReportParams = decode(params)?;
@@ -1982,6 +1983,20 @@ impl ControlServer {
             }));
         }
         Ok(json!({ "agents": agents }))
+    }
+
+    fn environment_refresh_path(&self) -> Result<JsonValue, ControlError> {
+        let app_support = self
+            .socket_path
+            .parent()
+            .ok_or_else(|| ControlError::internal("daemon socket has no parent directory"))?;
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+        let outcome = crate::environment::refresh_path(app_support, &shell, Duration::from_secs(2))
+            .map_err(|error| ControlError::internal(format!("path refresh failed: {error}")))?;
+        Ok(json!({
+            "path": outcome.path,
+            "updated": matches!(outcome.status, crate::environment::RefreshStatus::Updated),
+        }))
     }
 
     fn project_add(&self, params: Option<JsonValue>) -> Result<JsonValue, ControlError> {
@@ -3120,7 +3135,7 @@ mod tests {
     #[test]
     fn listing_sessions_returns_records_and_projects() {
         // The app decodes SessionListResult { sessions, projects }; both keys
-        // must be present, as the Swift daemon answers.
+        // must be present, as the reference implementation answers.
         let temp = tempfile::tempdir().expect("temp");
         let server = server(temp.path());
         let result = ok_of(call(&server, "session.list", None));
@@ -3362,7 +3377,7 @@ mod tests {
             Some(json!({ "sessionID": "s_diff" })),
         ));
         assert_eq!(result["truncated"], false);
-        // The patch travels base64-encoded, as the Swift daemon sends it.
+        // The patch travels base64-encoded, as the reference implementation sends it.
         use base64::Engine as _;
         let patch = base64::engine::general_purpose::STANDARD
             .decode(result["patch"].as_str().expect("patch"))

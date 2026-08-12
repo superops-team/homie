@@ -13,8 +13,8 @@ import Foundation
 /// only has to spell out the parts it wants to change.
 public struct AgentDescriptor: Codable, Hashable, Sendable {
     /// How the status reducer should be driven for this agent. Mirrors
-    /// `StatusReducer.Authority`, which lives in HomieDetection and therefore
-    /// can't be referenced from here.
+    /// the Rust Engine's reducer authority without making Swift Core depend on
+    /// runtime implementation code.
     public enum StatusAuthority: String, Codable, Hashable, Sendable {
         /// Hooks drive state, screen scanning only arbitrates blockers (Claude).
         case hooks

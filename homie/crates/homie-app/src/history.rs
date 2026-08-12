@@ -1,6 +1,6 @@
 //! Read-only discovery of Claude and Codex transcripts.
 //!
-//! This is a Rust port of `HomieDaemonKit/HistoryScanner.swift`. Keeping the
+//! This is the app-side conversation history scanner. Keeping the
 //! scan client-side lets homie show durable history without requiring a newer
 //! daemon. Transcript files are never modified.
 

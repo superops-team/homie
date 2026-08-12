@@ -36,7 +36,7 @@ pub enum Authority {
     ProcessOnly,
 }
 
-/// Timing knobs. The defaults are the ones the Swift daemon shipped.
+/// Timing knobs. The defaults are the ones the reference implementation shipped.
 #[derive(Clone, Copy, Debug)]
 pub struct ReducerTiming {
     pub idle_confirmations: u32,

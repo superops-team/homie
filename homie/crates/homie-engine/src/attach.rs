@@ -10,7 +10,7 @@
 //!
 //! One pump thread per session broadcasts to every sink attached to it, so
 //! the grid walk and diff are done once regardless of sink count — the same
-//! shape as the Swift daemon's coalesced `flushGrid`.
+//! shape as the reference implementation's coalesced `flushGrid`.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -25,7 +25,7 @@ use crate::registry::Registry;
 use crate::session::{AttachmentSeed, GridSignature};
 
 /// Background-output ceiling for grid emission, matching the client pacer and
-/// the Swift daemon's flush interval. The first frame after quiet and the
+/// the reference implementation's flush interval. The first frame after quiet and the
 /// bounded response frames after interactive input go immediately.
 const GRID_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
 
@@ -80,7 +80,7 @@ impl AttachHub {
         let seed = {
             let Ok(guard) = registry.lock() else { return };
             let Some(session) = guard.get(session_id) else {
-                return; // unknown session: close, as the Swift daemon does
+                return; // unknown session: close, as the reference implementation does
             };
             let seed = session.attachment_seed();
             let Ok(grid_frame) = Frame::grid(&seed.grid) else {

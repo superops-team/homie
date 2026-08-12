@@ -59,7 +59,7 @@ const IDLE_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const HOT_WINDOW_SECS: u64 = 30;
 
 /// Maximum raw log tail replayed when starting or adopting a held session.
-/// The same hard startup-work bound the Swift daemon enforced.
+/// The same hard startup-work bound the reference implementation enforced.
 const REPLAY_BUDGET: usize = 256 << 10;
 const MAX_REPLAY_BUDGET: usize = 32 << 20;
 
@@ -77,19 +77,19 @@ fn replay_budget() -> usize {
 }
 
 /// Quiet time after the last output before a screen checkpoint is written,
-/// the Swift daemon's `checkpointSettleDelay`. Bursts coalesce into one
+/// the reference implementation's `checkpointSettleDelay`. Bursts coalesce into one
 /// write; an idle screen is checkpointed within about a second.
 const CHECKPOINT_SETTLE: Duration = Duration::from_secs(1);
 
 /// How long a deferred spawn waits for the first client size before
 /// launching at the estimated size anyway — an MCP-spawned agent may never
-/// get a view. The Swift daemon's 400ms fallback window.
+/// get a view. The reference implementation's 400ms fallback window.
 const LAUNCH_FALLBACK: Duration = Duration::from_millis(400);
 
 /// While unlaunched, each client resize pushes the exec back this far, so
 /// the agent starts at the SETTLED viewport rather than a transient
 /// first-layout size — otherwise its one-shot banner bakes at the wrong
-/// width. The Swift daemon's `scheduleDebouncedLaunch` delay.
+/// width. The reference implementation's `scheduleDebouncedLaunch` delay.
 const LAUNCH_DEBOUNCE: Duration = Duration::from_millis(120);
 
 /// Quiet time between holder liveness probes: a holder that died markerless
@@ -387,7 +387,7 @@ pub struct Session {
 
 /// Deferred-launch state: the agent is not exec'd until the attaching client
 /// reports its real terminal size, so a TUI's one-shot banner renders at the
-/// exact width (no post-spawn reflow). Ported from the Swift daemon's
+/// exact width (no post-spawn reflow). Ported from the reference implementation's
 /// `scheduleDebouncedLaunch`.
 struct DeferredLaunch {
     state: Mutex<DeferredState>,
@@ -1236,7 +1236,7 @@ impl Session {
 
     /// Marks the session hibernated (input queues) or awake. On wake, the
     /// queued input flushes in order — right after the caller's SIGCONT, as
-    /// the Swift daemon's wake() did.
+    /// the reference implementation's wake() did.
     pub fn set_hibernated(&self, hibernated: bool) -> std::io::Result<()> {
         self.shared.hibernated.store(hibernated, Ordering::SeqCst);
         if hibernated {
@@ -1277,7 +1277,7 @@ impl Session {
 
     fn write_raw(&self, bytes: &[u8]) -> std::io::Result<()> {
         // Before the deferred exec there is no PTY: queue for the launch
-        // flush, exactly like the Swift daemon's `queuedLaunchInput`.
+        // flush, exactly like the reference implementation's `queuedLaunchInput`.
         if let Some(deferred) = &self.deferred
             && deferred.queue_input(bytes)
         {
@@ -2398,7 +2398,7 @@ fn pump_held(
             if replaying {
                 replaying = false;
                 // The replay tail is drained: checkpoint immediately, as the
-                // Swift daemon does right after `replayExistingLog`.
+                // reference implementation does right after `replayExistingLog`.
                 if checkpoint_dirty_at.take().is_some() {
                     persist_checkpoint(
                         &shared,
@@ -2432,7 +2432,7 @@ fn pump_held(
             if log_replaced {
                 // The watcher's descriptor followed the retired inode through
                 // rotation. Make the cached payload reader reopen the path as
-                // well, matching the Swift daemon's logDidChange(rearm:).
+                // well, matching the reference implementation's logDidChange(rearm:).
                 shared.log.lock().expect("log").invalidate_read_handle();
             }
             let outcome = shared
@@ -2521,7 +2521,7 @@ fn pump_held(
 
     // Detaching or exiting: capture the final screen, so the next daemon
     // seeds from a checkpoint instead of pushing a raw tail through a fresh
-    // emulator — the Swift daemon's teardown persist.
+    // emulator — the reference implementation's teardown persist.
     if checkpoint_dirty_at.is_some() {
         persist_checkpoint(
             &shared,
@@ -2630,7 +2630,7 @@ fn persist_checkpoint(
 }
 
 /// Wakes the held pump the moment the holder appends to the log, instead of
-/// sleep-polling between reads. The Swift daemon used a DispatchSource for
+/// sleep-polling between reads. The reference implementation used a DispatchSource for
 /// exactly this; without it every byte of held-session output arrives up to a
 /// quiet-tick late, which reads as ~10fps scrolling in a TUI.
 #[cfg(target_os = "macos")]

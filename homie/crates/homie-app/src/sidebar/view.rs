@@ -327,6 +327,7 @@ impl Sidebar {
         let host = {
             let mut store = self.store.write().expect("session store lock poisoned");
             store.reload_hosts();
+            store.refresh_agent_catalog();
             let remembered_host = store
                 .begin_repo_targeting()
                 .filter(|id| store.host(id).is_some());

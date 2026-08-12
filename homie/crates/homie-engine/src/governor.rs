@@ -21,7 +21,7 @@ use crate::events::EventBus;
 use crate::holder::process_tree;
 use crate::registry::Registry;
 
-/// Tunables, defaulting to the Swift daemon's values. `governor.configure`
+/// Tunables, defaulting to the reference implementation's values. `governor.configure`
 /// overrides the two the app exposes.
 #[derive(Clone, Debug)]
 pub struct GovernorConfig {

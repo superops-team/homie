@@ -156,19 +156,6 @@ if [[ -n "${settings_preview}" ]]; then
     launch_environment+=("HOMIE_SETTINGS_PREVIEW=${settings_preview}")
 fi
 
-# A dev wrapper intentionally does not carry a second daemon. If no daemon is
-# live, point its launch-only fallback at the installed release bundle; both
-# clients still use the same socket and Application Support directory.
-if [[ -z "${HOMIED_PATH:-}" ]]; then
-    for installed_app in "${HOME}/Applications/homie.app" "/Applications/homie.app"; do
-        installed_daemon="${installed_app}/Contents/Resources/bin/homied"
-        if [[ -x "${installed_daemon}" ]]; then
-            launch_environment+=("HOMIED_PATH=${installed_daemon}")
-            break
-        fi
-    done
-fi
-
 echo "==> Launching ${display_name} (${build_label})"
 echo "    ${app_path}"
 exec env \
