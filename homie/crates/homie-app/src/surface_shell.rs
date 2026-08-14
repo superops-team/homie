@@ -257,7 +257,11 @@ pub struct UtilitySurfaces {
     history_highlight: usize,
     history_loading: bool,
     history_error: Option<String>,
+    history_generation: u64,
+    history_task: Option<Task<()>>,
     worktrees: WorktreesSheet,
+    worktrees_generation: u64,
+    worktrees_task: Option<Task<()>>,
     settings_tab: SettingsTab,
     settings_menu: Option<SettingsMenu>,
     hosts_path: PathBuf,
@@ -346,7 +350,11 @@ impl UtilitySurfaces {
             history_highlight: 0,
             history_loading: false,
             history_error: None,
+            history_generation: 0,
+            history_task: None,
             worktrees: WorktreesSheet::default(),
+            worktrees_generation: 0,
+            worktrees_task: None,
             settings_tab,
             settings_menu: None,
             hosts_path,
@@ -374,18 +382,81 @@ impl UtilitySurfaces {
         crate::app_theme::sidebar_colors(&self.prefs.terminal_theme)
     }
 
+    fn next_history_generation(&mut self) -> u64 {
+        self.history_generation = self.history_generation.wrapping_add(1);
+        self.history_generation
+    }
+
+    fn next_worktrees_generation(&mut self) -> u64 {
+        self.worktrees_generation = self.worktrees_generation.wrapping_add(1);
+        self.worktrees_generation
+    }
+
+    fn finish_history_load(
+        &mut self,
+        generation: u64,
+        result: Result<Vec<HistoryEntry>, String>,
+    ) -> bool {
+        if self.surface != Surface::History || self.history_generation != generation {
+            return false;
+        }
+        self.history_loading = false;
+        match result {
+            Ok(entries) => {
+                self.activity = format!("{} past conversations found", entries.len());
+                self.history = entries;
+                self.history_error = None;
+            }
+            Err(error) => self.history_error = Some(error),
+        }
+        true
+    }
+
+    fn finish_history_resume(
+        &mut self,
+        generation: u64,
+        result: Result<homie_proto::SessionId, String>,
+    ) -> bool {
+        if self.surface != Surface::History || self.history_generation != generation {
+            return false;
+        }
+        self.history_loading = false;
+        match result {
+            Ok(id) => {
+                self.surface = Surface::None;
+                self.activity = format!("Resumed conversation in session {}", id.0);
+                self.history_error = None;
+            }
+            Err(error) => self.history_error = Some(error),
+        }
+        true
+    }
+
+    fn finish_worktrees_refresh(
+        &mut self,
+        generation: u64,
+        result: Result<Vec<homie_proto::WorktreeOverviewEntry>, String>,
+    ) -> bool {
+        if self.surface != Surface::Worktrees || self.worktrees_generation != generation {
+            return false;
+        }
+        self.worktrees.finish_refresh(result);
+        true
+    }
+
     pub(crate) fn open_history(&mut self, cx: &mut Context<Self>) {
         self.surface = Surface::History;
         self.history_query.clear();
         self.history_highlight = 0;
         self.history_loading = true;
         self.history_error = None;
+        let generation = self.next_history_generation();
         cx.notify();
 
         let roots = crate::history::HistoryRoots::current_user();
         let client = Arc::clone(self.store_runtime.client());
         let runtime = Arc::clone(&self.runtime);
-        cx.spawn(async move |this, cx| {
+        self.history_task = Some(cx.spawn(async move |this, cx| {
             let task = runtime.spawn(async move {
                 let tracked = if client
                     .wait_until_connected(Duration::from_secs(5))
@@ -415,18 +486,12 @@ impl UtilitySurfaces {
                 .map_err(|error| error.to_string())
                 .and_then(|r| r);
             let _ = this.update(cx, |this, cx| {
-                this.history_loading = false;
-                match result {
-                    Ok(entries) => {
-                        this.activity = format!("{} past conversations found", entries.len());
-                        this.history = entries;
-                    }
-                    Err(error) => this.history_error = Some(error),
+                this.history_task = None;
+                if this.finish_history_load(generation, result) {
+                    cx.notify();
                 }
-                cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 
     pub(crate) fn open_worktrees(&mut self, cx: &mut Context<Self>) {
@@ -436,10 +501,11 @@ impl UtilitySurfaces {
 
     fn refresh_worktrees(&mut self, cx: &mut Context<Self>) {
         self.worktrees.begin_refresh();
+        let generation = self.next_worktrees_generation();
         cx.notify();
         let client = Arc::clone(self.store_runtime.client());
         let runtime = Arc::clone(&self.runtime);
-        cx.spawn(async move |this, cx| {
+        self.worktrees_task = Some(cx.spawn(async move |this, cx| {
             let task = runtime.spawn(async move {
                 client.wait_until_connected(Duration::from_secs(5)).await?;
                 client.worktree_overview().await
@@ -450,11 +516,12 @@ impl UtilitySurfaces {
                 Err(error) => Err(error.to_string()),
             };
             let _ = this.update(cx, |this, cx| {
-                this.worktrees.finish_refresh(result);
-                cx.notify();
+                this.worktrees_task = None;
+                if this.finish_worktrees_refresh(generation, result) {
+                    cx.notify();
+                }
             });
-        })
-        .detach();
+        }));
     }
 
     fn resume_history(&mut self, entry: HistoryEntry, cx: &mut Context<Self>) {
@@ -465,9 +532,10 @@ impl UtilitySurfaces {
         };
         self.history_loading = true;
         self.history_error = None;
+        let generation = self.next_history_generation();
         let client = Arc::clone(self.store_runtime.client());
         let runtime = Arc::clone(&self.runtime);
-        cx.spawn(async move |this, cx| {
+        self.history_task = Some(cx.spawn(async move |this, cx| {
             let task = runtime.spawn(async move {
                 client.wait_until_connected(Duration::from_secs(5)).await?;
                 client.spawn(params).await
@@ -477,18 +545,12 @@ impl UtilitySurfaces {
                 Err(error) => Err(error.to_string()),
             };
             let _ = this.update(cx, |this, cx| {
-                this.history_loading = false;
-                match result {
-                    Ok(id) => {
-                        this.surface = Surface::None;
-                        this.activity = format!("Resumed conversation in session {id}");
-                    }
-                    Err(error) => this.history_error = Some(error),
+                this.history_task = None;
+                if this.finish_history_resume(generation, result) {
+                    cx.notify();
                 }
-                cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 
     fn confirm_cleanup(&mut self, cx: &mut Context<Self>) {
@@ -496,9 +558,10 @@ impl UtilitySurfaces {
             return;
         };
         self.worktrees.begin_refresh();
+        let generation = self.next_worktrees_generation();
         let client = Arc::clone(self.store_runtime.client());
         let runtime = Arc::clone(&self.runtime);
-        cx.spawn(async move |this, cx| {
+        self.worktrees_task = Some(cx.spawn(async move |this, cx| {
             let task = runtime.spawn(async move {
                 client.wait_until_connected(Duration::from_secs(5)).await?;
                 client.worktree_remove(params).await?;
@@ -510,11 +573,12 @@ impl UtilitySurfaces {
                 Err(error) => Err(error.to_string()),
             };
             let _ = this.update(cx, |this, cx| {
-                this.worktrees.finish_refresh(result);
-                cx.notify();
+                this.worktrees_task = None;
+                if this.finish_worktrees_refresh(generation, result) {
+                    cx.notify();
+                }
             });
-        })
-        .detach();
+        }));
     }
 
     fn persist_prefs(&mut self) {
@@ -895,6 +959,17 @@ impl UtilitySurfaces {
         if self.worktrees.pending_cleanup.is_some() {
             self.worktrees.cancel_cleanup();
         } else {
+            match self.surface {
+                Surface::History => {
+                    self.history_task = None;
+                    self.next_history_generation();
+                }
+                Surface::Worktrees => {
+                    self.worktrees_task = None;
+                    self.next_worktrees_generation();
+                }
+                Surface::None | Surface::Settings => {}
+            }
             self.surface = Surface::None;
             self.settings_menu = None;
             self.host_editor = None;
@@ -3583,6 +3658,7 @@ mod tests {
         Entity, Modifiers, MouseDownEvent, ScrollDelta, ScrollWheelEvent, StyleRefinement,
         TestAppContext, point, size,
     };
+    use homie_proto::{AgentKind, DateMillis, WorktreeOverviewEntry};
 
     /// RootView paints the utility surfaces through a cached wrapper. A cached
     /// entity root is laid out independently of its content, so mount the
@@ -3657,6 +3733,119 @@ mod tests {
         });
         expire_completed_reinstall(&mut state, "forge", 7);
         assert!(state.is_some(), "a stale timer must preserve newer work");
+    }
+
+    fn utility_surfaces_for_unit_tests(cx: &mut TestAppContext) -> UtilitySurfaces {
+        let runtime = Arc::new(StoreRuntime::inert());
+        let tokio = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime"),
+        );
+        let focus = cx.update(|cx| cx.focus_handle());
+        UtilitySurfaces {
+            focus,
+            surface: Surface::None,
+            history: Vec::new(),
+            history_query: QueryEditor::default(),
+            history_highlight: 0,
+            history_loading: false,
+            history_error: None,
+            history_generation: 0,
+            history_task: None,
+            worktrees: WorktreesSheet::default(),
+            worktrees_generation: 0,
+            worktrees_task: None,
+            settings_tab: SettingsTab::General,
+            settings_menu: None,
+            hosts_path: PathBuf::from("/tmp/homie-hosts.json"),
+            hosts: Vec::new(),
+            host_editor: None,
+            host_initialization: None,
+            host_initialization_generation: 0,
+            host_field_bounds: std::array::from_fn(|_| Rc::new(Cell::new(None))),
+            prefs: Prefs::default(),
+            store: Arc::clone(&runtime.store),
+            store_runtime: runtime,
+            runtime: tokio,
+            updates: crate::updates::inert(),
+            activity: String::new(),
+            _update_changes: Task::ready(()),
+            _store_changes: Task::ready(()),
+        }
+    }
+
+    fn history_entry(id: &str) -> HistoryEntry {
+        HistoryEntry {
+            id: id.to_owned(),
+            kind: AgentKind::generic("test-agent"),
+            cwd: "/tmp".to_owned(),
+            title: Some(id.to_owned()),
+            transcript_path: format!("/tmp/{id}.jsonl"),
+            last_active_at: DateMillis(0.0),
+            created_at: Some(DateMillis(0.0)),
+            cwd_exists: true,
+        }
+    }
+
+    fn worktree_entry(path: &str) -> WorktreeOverviewEntry {
+        WorktreeOverviewEntry {
+            path: path.to_owned(),
+            branch: Some("feature".to_owned()),
+            project_root: "/repo".to_owned(),
+            session_id: None,
+            session_status: None,
+            dirty: false,
+            merged: true,
+            age_days: 7,
+            stale_suggestion: true,
+        }
+    }
+
+    #[gpui::test]
+    fn stale_history_result_does_not_overwrite_newer_state(cx: &mut TestAppContext) {
+        let mut surfaces = utility_surfaces_for_unit_tests(cx);
+        surfaces.surface = Surface::History;
+        surfaces.history_generation = 2;
+        surfaces.history_loading = true;
+        surfaces.history_error = None;
+        surfaces.history = vec![history_entry("newer")];
+
+        assert!(!surfaces.finish_history_load(1, Ok(vec![history_entry("stale")])));
+
+        assert!(surfaces.history_loading);
+        assert_eq!(surfaces.history.len(), 1);
+        assert_eq!(surfaces.history[0].id, "newer");
+    }
+
+    #[gpui::test]
+    fn stale_worktrees_result_does_not_overwrite_newer_state(cx: &mut TestAppContext) {
+        let mut surfaces = utility_surfaces_for_unit_tests(cx);
+        surfaces.surface = Surface::Worktrees;
+        surfaces.worktrees_generation = 2;
+        surfaces.worktrees.begin_refresh();
+        surfaces.worktrees.entries = vec![worktree_entry("/repo/newer")];
+
+        assert!(!surfaces.finish_worktrees_refresh(1, Ok(vec![worktree_entry("/repo/stale")])));
+
+        assert!(surfaces.worktrees.loading);
+        assert_eq!(surfaces.worktrees.entries.len(), 1);
+        assert_eq!(surfaces.worktrees.entries[0].path, "/repo/newer");
+    }
+
+    #[gpui::test]
+    fn closed_utility_surface_ignores_late_results(cx: &mut TestAppContext) {
+        let mut surfaces = utility_surfaces_for_unit_tests(cx);
+        surfaces.surface = Surface::None;
+        surfaces.history_generation = 1;
+        surfaces.worktrees_generation = 1;
+
+        assert!(!surfaces.finish_history_load(1, Ok(vec![history_entry("late")])));
+        assert!(!surfaces.finish_worktrees_refresh(1, Ok(vec![worktree_entry("/repo/late")])));
+
+        assert!(surfaces.history.is_empty());
+        assert!(surfaces.worktrees.entries.is_empty());
     }
 
     struct CachedSettingsModalHarness {

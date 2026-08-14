@@ -9,7 +9,7 @@
 .fseventsd/
 .TemporaryItems/
 .VolumeIcon.icns
-Icon?
+/Icon?
 
 # Rust build output
 /target/
