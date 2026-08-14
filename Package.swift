@@ -16,8 +16,9 @@ let package = Package(
     ],
     targets: [
         // MARK: Shared
-        // Agent manifests live here because the CLI and protocol tooling need
-        // the descriptor half. Runtime detection is owned by the Rust Engine.
+        // Generated mirror of homie/crates/homie-engine/manifests for Swift
+        // CLI/protocol tooling. Edit the Rust Engine catalog, then run
+        // scripts/sync-agent-manifests.sh; do not hand-edit these resources.
         .target(name: "HomieCore", resources: [.copy("Resources/manifests")]),
         .target(name: "HomieProtocol", dependencies: ["HomieCore"]),
         .target(name: "HomieMCP", dependencies: ["HomieProtocol", "HomieCore"]),

@@ -5,9 +5,10 @@
   "version": "2026.07.31.1",
   "statusModel": "full",
   "agent": {
+    "id": "kiro",
     "displayName": "Kiro",
     "shortLabel": "kiro",
-    "glyph": "◇",
+    "glyph": "\u25c7",
     "aliases": [
       "kiro",
       "kiro-cli"
@@ -16,14 +17,19 @@
     "statusAuthority": "screen",
     "binary": "kiro-cli",
     "resume": {
-      "style": "latest",
+      "style": "flag",
       "token": "--resume"
     },
     "returnToLoginShell": true,
     "foregroundExecNames": [
       "kiro-cli"
     ],
-    "_resumeNotice": "Verified against Kiro's CLI reference: '--resume / -r | Resume the previous conversation from this directory'; its example labels 'kiro-cli chat --resume' as 'Resume the most recent chat session'. https://kiro.dev/docs/cli/reference/cli-commands/"
+    "_resumeNotice": "Verified against Kiro's CLI reference: '--resume / -r | Resume the previous conversation from this directory'; its example labels 'kiro-cli chat --resume' as 'Resume the most recent chat session'. https://kiro.dev/docs/cli/reference/cli-commands/",
+    "_resumeStyleNotice": "Rust's AgentDescriptor::resume_args implements only \"flag\" and \"sessionIDFlag\"; Swift's \"latest\" has no implementation there and would silently resume nothing. Declared as \"flag\": this agent has no sessionIDFlag, so it never carries a caller-minted id and resume_args emits the bare token \u2014 exactly the semantics the token was chosen for.",
+    "envScrubPrefixes": [
+      "HOMIE_",
+      "HOMIE_"
+    ]
   },
   "rules": [
     {
@@ -114,7 +120,7 @@
       "when": {
         "all": [
           {
-            "lineRegex": "^\\s*(◔|◑|◕|●)\\s"
+            "lineRegex": "^\\s*(\u25d4|\u25d1|\u25d5|\u25cf)\\s"
           },
           {
             "contains": "esc to cancel"

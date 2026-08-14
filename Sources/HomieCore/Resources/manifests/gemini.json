@@ -4,9 +4,10 @@
   "version": "2026.07.10",
   "statusModel": "full",
   "agent": {
+    "id": "gemini",
     "displayName": "Gemini",
     "shortLabel": "gemini",
-    "glyph": "✦",
+    "glyph": "\u2726",
     "aliases": [
       "gemini",
       "gemini-cli"
@@ -20,7 +21,9 @@
       "token": "--resume"
     },
     "envScrubPrefixes": [
-      "GEMINI_CLI"
+      "GEMINI_CLI",
+      "HOMIE_",
+      "HOMIE_"
     ],
     "foregroundExecNames": [
       "gemini"
@@ -28,6 +31,10 @@
     "approve": {
       "text": "",
       "submit": true
+    },
+    "deny": {
+      "text": "\u001b",
+      "submit": false
     }
   },
   "rules": [

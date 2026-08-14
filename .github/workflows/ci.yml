@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5.0.0
       - name: Validate shell scripts
         run: bash -n scripts/*.sh homie/scripts/*.sh
+      - name: Verify agent manifest mirror
+        run: scripts/check-agent-manifest-drift.sh
       - name: Verify reviewed regressions stay fixed
         run: homie/scripts/verify-remote-refactor.sh
       - name: Test release publishing guards

@@ -2,10 +2,12 @@ import Foundation
 
 /// The set of agents Homie knows how to run, loaded from manifest files.
 ///
-/// One JSON file per agent under `Resources/manifests/`, each carrying an
-/// `"agent"` descriptor block (what this type reads) plus the detection `rules`
-/// (which the Rust Engine reads from the same files). Both halves live in one
-/// file so "add an agent" stays one file drop.
+/// One JSON file per agent under `Resources/manifests/`, generated from the
+/// Rust Engine's authoritative catalog at `homie/crates/homie-engine/manifests`.
+/// Each file carries an `"agent"` descriptor block (what this type reads) plus
+/// the detection `rules` (which the Rust Engine reads from its source catalog).
+/// Both halves live in one file so "add an agent" stays one Rust-catalog file
+/// drop followed by `scripts/sync-agent-manifests.sh`.
 ///
 /// The catalog is process-wide and immutable after first use: descriptors feed
 /// `AgentKind.displayName` / `isFirstClass`, which are read from every actor in
@@ -78,9 +80,10 @@ public struct AgentCatalog: Sendable {
             .appendingPathComponent("Homie/manifests/overrides", isDirectory: true)
     }
 
-    /// Manifest files in load order: bundled first, then user overrides (which
-    /// replace a bundled agent of the same id). Also what the Rust Engine
-    /// walks for detection rules, so both halves of a file always agree.
+    /// Manifest files in load order: bundled generated mirror first, then user
+    /// overrides (which replace a bundled agent of the same id). The Rust Engine
+    /// walks its own source catalog for detection rules; the mirror is kept in
+    /// sync by scripts/check-agent-manifest-drift.sh.
     public static func manifestURLs(overridesDirectory: URL? = overridesDirectory) -> [URL] {
         var urls: [URL] = []
         if let dir = ResourceBundle.core?.url(forResource: "manifests", withExtension: nil) {

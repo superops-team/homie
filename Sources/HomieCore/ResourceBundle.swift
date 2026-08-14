@@ -11,7 +11,7 @@ import Foundation
 /// Contents/Resources and find them here; nil-safe so absent resources degrade
 /// (empty catalog) instead of taking the process down.
 public enum ResourceBundle {
-    /// The `homie_HomieCore` resource bundle (agent manifests), or nil.
+    /// The `homie_HomieCore` resource bundle (generated agent-manifest mirror), or nil.
     public static let core: Bundle? = find("homie_HomieCore")
 
     public static func find(_ name: String) -> Bundle? {

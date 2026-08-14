@@ -5,9 +5,10 @@
   "version": "2026.07.31.1",
   "statusModel": "full",
   "agent": {
+    "id": "copilot",
     "displayName": "Copilot CLI",
     "shortLabel": "copilot",
-    "glyph": "⊙",
+    "glyph": "\u2299",
     "aliases": [
       "copilot",
       "github-copilot",
@@ -17,14 +18,19 @@
     "statusAuthority": "screen",
     "binary": "copilot",
     "resume": {
-      "style": "latest",
+      "style": "flag",
       "token": "--continue"
     },
     "returnToLoginShell": true,
     "foregroundExecNames": [
       "copilot"
     ],
-    "_resumeNotice": "Verified against GitHub Docs: 'From the command line, run copilot --continue to resume your most recent session.' https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/chronicle. --resume is the picker/id form, so it cannot provide deterministic latest-session semantics."
+    "_resumeNotice": "Verified against GitHub Docs: 'From the command line, run copilot --continue to resume your most recent session.' https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/chronicle. --resume is the picker/id form, so it cannot provide deterministic latest-session semantics.",
+    "_resumeStyleNotice": "Rust's AgentDescriptor::resume_args implements only \"flag\" and \"sessionIDFlag\"; Swift's \"latest\" has no implementation there and would silently resume nothing. Declared as \"flag\": this agent has no sessionIDFlag, so it never carries a caller-minted id and resume_args emits the bare token \u2014 exactly the semantics the token was chosen for.",
+    "envScrubPrefixes": [
+      "HOMIE_",
+      "HOMIE_"
+    ]
   },
   "rules": [
     {

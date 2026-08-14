@@ -5,9 +5,10 @@
   "version": "2026.07.31.1",
   "statusModel": "full",
   "agent": {
+    "id": "hermes",
     "displayName": "Hermes",
     "shortLabel": "hermes",
-    "glyph": "⌁",
+    "glyph": "\u2301",
     "aliases": [
       "hermes",
       "hermes-agent"
@@ -16,14 +17,19 @@
     "statusAuthority": "screen",
     "binary": "hermes",
     "resume": {
-      "style": "latest",
+      "style": "flag",
       "token": "--continue"
     },
     "returnToLoginShell": true,
     "foregroundExecNames": [
       "hermes"
     ],
-    "_resumeNotice": "Verified against Hermes' official session guide: 'hermes --continue' under 'Resume the most recent CLI session'; it says this 'looks up the most recent cli session'. https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/sessions.md. --resume is the id/title form."
+    "_resumeNotice": "Verified against Hermes' official session guide: 'hermes --continue' under 'Resume the most recent CLI session'; it says this 'looks up the most recent cli session'. https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/sessions.md. --resume is the id/title form.",
+    "_resumeStyleNotice": "Rust's AgentDescriptor::resume_args implements only \"flag\" and \"sessionIDFlag\"; Swift's \"latest\" has no implementation there and would silently resume nothing. Declared as \"flag\": this agent has no sessionIDFlag, so it never carries a caller-minted id and resume_args emits the bare token \u2014 exactly the semantics the token was chosen for.",
+    "envScrubPrefixes": [
+      "HOMIE_",
+      "HOMIE_"
+    ]
   },
   "rules": [
     {
@@ -32,7 +38,7 @@
       "priority": 1100,
       "region": "osc_title",
       "when": {
-        "regex": "^⚠"
+        "regex": "^\u26a0"
       },
       "flags": [
         "visible_blocker"
@@ -49,7 +55,7 @@
       "priority": 1050,
       "region": "osc_title",
       "when": {
-        "regex": "^⏳"
+        "regex": "^\u23f3"
       }
     },
     {
@@ -91,7 +97,7 @@
                 "contains": "allow once"
               },
               {
-                "lineRegex": "(?i)^\\s*[▸>]?\\s*1\\.\\s*allow"
+                "lineRegex": "(?i)^\\s*[\u25b8>]?\\s*1\\.\\s*allow"
               }
             ]
           },
@@ -101,7 +107,7 @@
                 "contains": "enter confirm"
               },
               {
-                "contains": "↑/↓ to select"
+                "contains": "\u2191/\u2193 to select"
               },
               {
                 "contains": "show full command"
@@ -167,7 +173,7 @@
       "priority": 100,
       "region": "osc_title",
       "when": {
-        "regex": "^✓"
+        "regex": "^\u2713"
       }
     }
   ]

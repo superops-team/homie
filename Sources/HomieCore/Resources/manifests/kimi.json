@@ -5,9 +5,10 @@
   "version": "2026.07.31.1",
   "statusModel": "full",
   "agent": {
+    "id": "kimi",
     "displayName": "Kimi",
     "shortLabel": "kimi",
-    "glyph": "🌙",
+    "glyph": "\ud83c\udf19",
     "aliases": [
       "kimi",
       "kimi-code",
@@ -17,14 +18,19 @@
     "statusAuthority": "screen",
     "binary": "kimi",
     "resume": {
-      "style": "latest",
+      "style": "flag",
       "token": "--continue"
     },
     "returnToLoginShell": true,
     "foregroundExecNames": [
       "kimi"
     ],
-    "_resumeNotice": "Verified against Kimi Code CLI docs: '--continue | -c | Continue the most recent session in the current working directory, without specifying an ID manually'. https://moonshotai.github.io/kimi-code/en/reference/kimi-command.html. --session is the picker/id form."
+    "_resumeNotice": "Verified against Kimi Code CLI docs: '--continue | -c | Continue the most recent session in the current working directory, without specifying an ID manually'. https://moonshotai.github.io/kimi-code/en/reference/kimi-command.html. --session is the picker/id form.",
+    "_resumeStyleNotice": "Rust's AgentDescriptor::resume_args implements only \"flag\" and \"sessionIDFlag\"; Swift's \"latest\" has no implementation there and would silently resume nothing. Declared as \"flag\": this agent has no sessionIDFlag, so it never carries a caller-minted id and resume_args emits the bare token \u2014 exactly the semantics the token was chosen for.",
+    "envScrubPrefixes": [
+      "HOMIE_",
+      "HOMIE_"
+    ]
   },
   "rules": [
     {
@@ -35,7 +41,7 @@
       "when": {
         "all": [
           {
-            "contains": "↵ confirm"
+            "contains": "\u21b5 confirm"
           },
           {
             "any": [
@@ -55,7 +61,7 @@
                 "contains": "ready to build with this plan?"
               },
               {
-                "lineRegex": "(?i)^\\s*▶?\\s*approve .*\\?$"
+                "lineRegex": "(?i)^\\s*\u25b6?\\s*approve .*\\?$"
               }
             ]
           }
@@ -78,7 +84,7 @@
       "when": {
         "all": [
           {
-            "contains": "↑↓ select"
+            "contains": "\u2191\u2193 select"
           },
           {
             "contains": "esc cancel"
@@ -153,7 +159,7 @@
       "priority": 100,
       "region": "whole_recent",
       "when": {
-        "lineRegex": "^\\s*(🌕|🌖|🌗|🌘|🌑|🌒|🌓|🌔)\\s*$"
+        "lineRegex": "^\\s*(\ud83c\udf15|\ud83c\udf16|\ud83c\udf17|\ud83c\udf18|\ud83c\udf11|\ud83c\udf12|\ud83c\udf13|\ud83c\udf14)\\s*$"
       }
     },
     {

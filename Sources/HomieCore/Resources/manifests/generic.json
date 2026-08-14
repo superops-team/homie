@@ -4,9 +4,10 @@
   "version": "1",
   "statusModel": "processOnly",
   "agent": {
+    "id": "generic",
     "displayName": "Agent",
     "shortLabel": "agent",
-    "glyph": "▸",
+    "glyph": "\u25b8",
     "firstClass": false,
     "statusAuthority": "process"
   },

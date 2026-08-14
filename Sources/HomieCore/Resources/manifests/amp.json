@@ -5,9 +5,10 @@
   "version": "2026.07.31.1",
   "statusModel": "full",
   "agent": {
+    "id": "amp",
     "displayName": "Amp",
     "shortLabel": "amp",
-    "glyph": "⏻",
+    "glyph": "\u23fb",
     "aliases": [
       "amp",
       "amp-local",
@@ -19,6 +20,10 @@
     "returnToLoginShell": true,
     "foregroundExecNames": [
       "amp"
+    ],
+    "envScrubPrefixes": [
+      "HOMIE_",
+      "HOMIE_"
     ]
   },
   "rules": [
@@ -99,7 +104,7 @@
       "priority": 200,
       "region": "whole_recent",
       "when": {
-        "lineRegex": "(?i)^\\s*╰\\s+\\S+\\s+(thinking|streaming|running tools|waiting)\\s+─"
+        "lineRegex": "(?i)^\\s*\u2570\\s+\\S+\\s+(thinking|streaming|running tools|waiting)\\s+\u2500"
       }
     },
     {

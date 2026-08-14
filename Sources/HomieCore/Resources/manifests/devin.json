@@ -5,9 +5,10 @@
   "version": "2026.07.31.1",
   "statusModel": "full",
   "agent": {
+    "id": "devin",
     "displayName": "Devin",
     "shortLabel": "devin",
-    "glyph": "◐",
+    "glyph": "\u25d0",
     "aliases": [
       "devin",
       "devin-cli"
@@ -16,14 +17,19 @@
     "statusAuthority": "screen",
     "binary": "devin",
     "resume": {
-      "style": "latest",
+      "style": "flag",
       "token": "--continue"
     },
     "returnToLoginShell": true,
     "foregroundExecNames": [
       "devin"
     ],
-    "_resumeNotice": "Verified against Devin's command reference: '--continue | -c | Resume the most recent session in the current directory'. https://docs.devin.ai/cli/reference/commands. --resume requires a session ID, so it cannot work without an id source."
+    "_resumeNotice": "Verified against Devin's command reference: '--continue | -c | Resume the most recent session in the current directory'. https://docs.devin.ai/cli/reference/commands. --resume requires a session ID, so it cannot work without an id source.",
+    "_resumeStyleNotice": "Rust's AgentDescriptor::resume_args implements only \"flag\" and \"sessionIDFlag\"; Swift's \"latest\" has no implementation there and would silently resume nothing. Declared as \"flag\": this agent has no sessionIDFlag, so it never carries a caller-minted id and resume_args emits the bare token \u2014 exactly the semantics the token was chosen for.",
+    "envScrubPrefixes": [
+      "HOMIE_",
+      "HOMIE_"
+    ]
   },
   "rules": [
     {
@@ -115,7 +121,7 @@
       "priority": 120,
       "region": "whole_recent",
       "when": {
-        "lineRegex": "^\\s*❭ Ask Devin to build"
+        "lineRegex": "^\\s*\u276d Ask Devin to build"
       }
     },
     {
@@ -126,7 +132,7 @@
       "when": {
         "all": [
           {
-            "lineRegex": "^\\s*❭"
+            "lineRegex": "^\\s*\u276d"
           },
           {
             "contains": "context:"

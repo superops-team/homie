@@ -5,9 +5,10 @@
   "version": "2026.07.31.1",
   "statusModel": "full",
   "agent": {
+    "id": "kilo",
     "displayName": "Kilo Code",
     "shortLabel": "kilo",
-    "glyph": "◍",
+    "glyph": "\u25cd",
     "aliases": [
       "kilo",
       "kilo-code"
@@ -16,14 +17,19 @@
     "statusAuthority": "screen",
     "binary": "kilo",
     "resume": {
-      "style": "latest",
+      "style": "flag",
       "token": "--continue"
     },
     "returnToLoginShell": true,
     "foregroundExecNames": [
       "kilo"
     ],
-    "_resumeNotice": "Verified against Kilo's CLI docs: 'Resume your last conversation from the current workspace using the --continue (or -c) flag'. https://kilo.ai/docs/code-with-ai/platforms/cli. --session requires an id."
+    "_resumeNotice": "Verified against Kilo's CLI docs: 'Resume your last conversation from the current workspace using the --continue (or -c) flag'. https://kilo.ai/docs/code-with-ai/platforms/cli. --session requires an id.",
+    "_resumeStyleNotice": "Rust's AgentDescriptor::resume_args implements only \"flag\" and \"sessionIDFlag\"; Swift's \"latest\" has no implementation there and would silently resume nothing. Declared as \"flag\": this agent has no sessionIDFlag, so it never carries a caller-minted id and resume_args emits the bare token \u2014 exactly the semantics the token was chosen for.",
+    "envScrubPrefixes": [
+      "HOMIE_",
+      "HOMIE_"
+    ]
   },
   "rules": [
     {
@@ -34,7 +40,7 @@
       "when": {
         "any": [
           {
-            "contains": "△ permission required"
+            "contains": "\u25b3 permission required"
           },
           {
             "all": [
@@ -57,10 +63,10 @@
               {
                 "any": [
                   {
-                    "contains": "↑↓ select"
+                    "contains": "\u2191\u2193 select"
                   },
                   {
-                    "contains": "⇆ tab"
+                    "contains": "\u21c6 tab"
                   }
                 ]
               }

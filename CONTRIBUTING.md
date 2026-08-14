@@ -83,10 +83,11 @@ consequences worth knowing:
 ## Adding an agent
 
 This is the easiest place to start and needs no Swift or Rust. Agent support is
-data: each agent is one JSON file in `Sources/HomieCore/Resources/manifests/`
+data: each agent is one JSON file in `homie/crates/homie-engine/manifests/`
 describing how to spawn it, how to resume a session, which keystrokes approve or
 deny, and the screen predicates that decide whether it is working, waiting on
-you, or done. Copy the closest existing manifest and adjust it.
+you, or done. Copy the closest existing manifest and adjust it, then run
+`scripts/sync-agent-manifests.sh` to refresh the Swift CLI/Core resource mirror.
 
 Claude Code and Codex have first-class status detection and resume. Anything
 without a manifest still runs as a plain terminal.

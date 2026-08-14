@@ -157,20 +157,19 @@ private let legacyEncodings: [(json: String, expected: AgentKind)] = [
     #expect(AgentKind.gemini.descriptor.canResume)  // --session-id
     #expect(!AgentKind.shell.descriptor.canResume)
 
-    // `.latest` needs no id, so requiring one demoted agents that resume fine.
-    // Both of these were verified against the installed CLI's help output, not
-    // inferred: `cursor-agent resume` ("Resume the latest chat session") and
-    // `opencode --continue` ("continue the last session"). Cursor still cannot
-    // do an id-targeted resume — its chat ids are minted server-side — which is
-    // why the spec is `.latest` and not `.flag`.
+    // The generated Rust manifest mirror uses `.flag` for latest-session resume
+    // spellings because the Rust Engine emits the bare token when no id is known.
+    // Cursor still cannot do an id-targeted resume — its chat ids are minted
+    // server-side — so the UI must ask for the nil-id argv when it wants the
+    // latest session.
     let cursor = AgentKind.cursor.descriptor
     #expect(cursor.canResume)
-    #expect(cursor.resume?.style == .latest)
-    #expect(cursor.resume?.argv(id: "ignored") == ["resume"])
+    #expect(cursor.resume?.style == .flag)
+    #expect(cursor.resume?.argv(id: Optional<String>.none) == ["resume"])
 
     let opencode = AgentCatalog.shared.descriptor(for: "opencode")
     #expect(opencode.canResume)
-    #expect(opencode.resume?.argv(id: "ignored") == ["--continue"])
+    #expect(opencode.resume?.argv(id: Optional<String>.none) == ["--continue"])
 
     // None of these binaries was installed on the verification machine, so
     // every verdict below rests on the linked first-party documentation. Keep
@@ -215,8 +214,8 @@ private let legacyEncodings: [(json: String, expected: AgentKind)] = [
     for (id, token) in documentedLatest {
         let descriptor = AgentCatalog.shared.descriptor(for: id)
         #expect(descriptor.canResume, "\(id) lost its verified latest-session resume")
-        #expect(descriptor.resume?.style == .latest)
-        #expect(descriptor.resume?.argv(id: "ignored") == [token])
+        #expect(descriptor.resume?.style == .flag)
+        #expect(descriptor.resume?.argv(id: Optional<String>.none) == [token])
     }
 
     // Amp's SDK says `continue: true` will "Continue most recent thread", but
@@ -239,4 +238,13 @@ private let legacyEncodings: [(json: String, expected: AgentKind)] = [
         AgentDescriptor.Resume(style: .flagJoined, token: "--resume").argv(id: "x")
             == ["--resume=x"])
     #expect(AgentDescriptor.Resume(style: .latest, token: "resume").argv(id: "x") == ["resume"])
+    #expect(
+        AgentDescriptor.Resume(style: .flag, token: "--continue").argv(id: Optional<String>.none)
+            == ["--continue"])
+    #expect(
+        AgentDescriptor.Resume(style: .subcommand, token: "resume").argv(id: Optional<String>.none)
+            == nil)
+    #expect(
+        AgentDescriptor.Resume(style: .flagJoined, token: "--resume").argv(id: Optional<String>.none)
+            == nil)
 }

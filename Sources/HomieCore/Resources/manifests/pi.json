@@ -5,9 +5,10 @@
   "version": "2026.07.31.1",
   "statusModel": "processOnly",
   "agent": {
+    "id": "pi",
     "displayName": "Pi",
     "shortLabel": "pi",
-    "glyph": "π",
+    "glyph": "\u03c0",
     "aliases": [
       "pi"
     ],
@@ -15,14 +16,19 @@
     "statusAuthority": "process",
     "binary": "pi",
     "resume": {
-      "style": "latest",
+      "style": "flag",
       "token": "-c"
     },
     "returnToLoginShell": true,
     "foregroundExecNames": [
       "pi"
     ],
-    "_resumeNotice": "Verified against Pi's official README: 'pi -c                  # Continue most recent session'. https://github.com/earendil-works/pi/blob/main/packages/coding-agent/README.md. --session requires a path or id."
+    "_resumeNotice": "Verified against Pi's official README: 'pi -c                  # Continue most recent session'. https://github.com/earendil-works/pi/blob/main/packages/coding-agent/README.md. --session requires a path or id.",
+    "_resumeStyleNotice": "Rust's AgentDescriptor::resume_args implements only \"flag\" and \"sessionIDFlag\"; Swift's \"latest\" has no implementation there and would silently resume nothing. Declared as \"flag\": this agent has no sessionIDFlag, so it never carries a caller-minted id and resume_args emits the bare token \u2014 exactly the semantics the token was chosen for.",
+    "envScrubPrefixes": [
+      "HOMIE_",
+      "HOMIE_"
+    ]
   },
   "rules": []
 }

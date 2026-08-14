@@ -76,10 +76,12 @@ support and platform glue where it is still needed.
 ## Adding an agent
 
 Agent support is data, not code. Each agent is one JSON file in
-`Sources/HomieCore/Resources/manifests/` describing how to spawn it, how to resume, which keys
-approve or deny a prompt, and the screen rules that decide whether it is working, waiting, or
-done. Copy the closest existing manifest and adjust it — no Swift or Rust required. This is the
-easiest way to contribute.
+`homie/crates/homie-engine/manifests/` describing how to spawn it, how to resume,
+which keys approve or deny a prompt, and the screen rules that decide whether it
+is working, waiting, or done. Copy the closest existing manifest and adjust it,
+then run `scripts/sync-agent-manifests.sh` so the Swift CLI/Core resource mirror
+stays aligned — no Swift or Rust required. This is the easiest way to
+contribute.
 
 ## Building from source
 

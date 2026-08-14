@@ -282,6 +282,8 @@ impl WorkbenchInspector {
             // *periodic* poll below, not this edge-triggered refresh.
             self.refresh(true, cx);
         } else {
+            self.refresh_task = None;
+            self.review_task = None;
             self.comparison_menu_open = false;
             self.files_open = false;
             self.ask_draft = None;
@@ -4449,6 +4451,8 @@ mod tests {
             inspector.select_tab(InspectorTab::Info, cx);
         });
         assert!(inspector.read_with(cx, |inspector, _| inspector.poll_task.is_none()));
+        inspector.update(cx, |inspector, cx| inspector.set_visible(false, cx));
+        cx.run_until_parked();
     }
 
     #[test]

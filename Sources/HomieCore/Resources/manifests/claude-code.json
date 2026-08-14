@@ -4,9 +4,10 @@
   "version": "2026.07.07.1",
   "statusModel": "full",
   "agent": {
+    "id": "claude-code",
     "displayName": "Claude Code",
     "shortLabel": "claude",
-    "glyph": "✳",
+    "glyph": "\u2733",
     "aliases": [
       "claude",
       "claude-code",
@@ -25,7 +26,9 @@
       "CLAUDE_CODE_NO_FLICKER": "1"
     },
     "envScrubPrefixes": [
-      "CLAUDE"
+      "CLAUDE",
+      "HOMIE_",
+      "HOMIE_"
     ],
     "injection": {
       "claudeHooks": true,
@@ -37,6 +40,10 @@
     "approve": {
       "text": "1",
       "submit": true
+    },
+    "deny": {
+      "text": "\u001b",
+      "submit": false
     }
   },
   "rules": [
@@ -86,7 +93,7 @@
             "contains": "bash command"
           },
           {
-            "lineRegex": "^\\s*[❯>]?\\s*1\\.\\s*yes"
+            "lineRegex": "^\\s*[\u276f>]?\\s*1\\.\\s*yes"
           },
           {
             "contains": "esc to cancel"
@@ -109,7 +116,7 @@
       "when": {
         "all": [
           {
-            "lineRegex": "^\\s*❯\\s*\\d+\\."
+            "lineRegex": "^\\s*\u276f\\s*\\d+\\."
           },
           {
             "any": [
@@ -139,7 +146,7 @@
       "when": {
         "all": [
           {
-            "lineRegex": "^\\s*[❯>]?\\s*\\d+\\."
+            "lineRegex": "^\\s*[\u276f>]?\\s*\\d+\\."
           },
           {
             "contains": "enter to select"
@@ -160,7 +167,7 @@
       "priority": 900,
       "region": "osc_title",
       "when": {
-        "regex": "^[⠀-⣿]"
+        "regex": "^[\u2800-\u28ff]"
       }
     },
     {
@@ -169,7 +176,7 @@
       "priority": 500,
       "region": "prompt_box_body",
       "when": {
-        "lineRegex": "^\\s*❯"
+        "lineRegex": "^\\s*\u276f"
       }
     },
     {
@@ -178,7 +185,7 @@
       "priority": 450,
       "region": "osc_title",
       "when": {
-        "regex": "^✳"
+        "regex": "^\u2733"
       }
     },
     {

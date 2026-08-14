@@ -5,6 +5,7 @@
   "version": "2026.07.31.1",
   "statusModel": "full",
   "agent": {
+    "id": "opencode",
     "displayName": "OpenCode",
     "shortLabel": "opencode",
     "glyph": "\u25ce",
@@ -16,14 +17,27 @@
     "statusAuthority": "screen",
     "binary": "opencode",
     "resume": {
-      "style": "latest",
+      "style": "flag",
       "token": "--continue"
     },
     "returnToLoginShell": true,
     "foregroundExecNames": [
       "opencode"
     ],
-    "_resumeNotice": "Verified against opencode CLI help: '-c, --continue  continue the last session'. --session takes an id opencode mints itself, which we cannot learn, so latest-style is the only resume that actually works here."
+    "_resumeNotice": "Verified against opencode CLI help: '-c, --continue  continue the last session'. --session takes an id opencode mints itself, which we cannot learn, so latest-style is the only resume that actually works here.",
+    "_resumeStyleNotice": "Rust's AgentDescriptor::resume_args implements only \"flag\" and \"sessionIDFlag\"; Swift's \"latest\" has no implementation there and would silently resume nothing. Declared as \"flag\": this agent has no sessionIDFlag, so it never carries a caller-minted id and resume_args emits the bare token \u2014 exactly the semantics the token was chosen for.",
+    "envScrubPrefixes": [
+      "HOMIE_",
+      "HOMIE_"
+    ],
+    "approve": {
+      "text": "",
+      "submit": true
+    },
+    "deny": {
+      "text": "\u001b",
+      "submit": false
+    }
   },
   "rules": [
     {

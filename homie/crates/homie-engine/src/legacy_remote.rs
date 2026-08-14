@@ -96,7 +96,7 @@ pub fn legacy_pane_name(session_id: &str) -> String {
 }
 
 /// Whether a name is one this program could have generated: the literal
-/// `homie-` prefix plus one to eight lowercase hex digits and nothing else.
+/// `homie-` prefix plus exactly eight lowercase hex digits and nothing else.
 ///
 /// Tighter than a prefix match on purpose. A user's own `homie-notes` pane, or
 /// anything else that merely starts with `homie-`, is not ours and is neither
@@ -105,8 +105,7 @@ fn is_homie_generated_name(name: &str) -> bool {
     let Some(suffix) = name.strip_prefix("homie-") else {
         return false;
     };
-    !suffix.is_empty()
-        && suffix.len() <= 8
+    suffix.len() == 8
         && suffix
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))

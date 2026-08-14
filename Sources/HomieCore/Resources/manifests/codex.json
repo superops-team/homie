@@ -4,9 +4,10 @@
   "version": "2026.07.07",
   "statusModel": "full",
   "agent": {
+    "id": "codex",
     "displayName": "Codex",
     "shortLabel": "codex",
-    "glyph": "◇",
+    "glyph": "\u25c7",
     "aliases": [
       "codex",
       "openai-codex"
@@ -16,11 +17,13 @@
     "binary": "codex",
     "returnToLoginShell": true,
     "resume": {
-      "style": "subcommand",
+      "style": "flag",
       "token": "resume"
     },
     "envScrubPrefixes": [
-      "CODEX"
+      "CODEX",
+      "HOMIE_",
+      "HOMIE_"
     ],
     "injection": {
       "codexNotify": true,
@@ -32,6 +35,11 @@
     "approve": {
       "text": "",
       "submit": true
+    },
+    "_resumeStyleNotice": "Swift's \"subcommand\" style has no implementation in Rust's AgentDescriptor::resume_args. Declared as \"flag\": with no id it emits `codex resume`, and once a notify payload supplies a thread-id it emits `codex resume <thread-id>` \u2014 both are valid codex invocations.",
+    "deny": {
+      "text": "\u001b",
+      "submit": false
     }
   },
   "rules": [
@@ -97,7 +105,7 @@
       "priority": 900,
       "region": "osc_title",
       "when": {
-        "regex": "^[⠀-⣿]"
+        "regex": "^[\u2800-\u28ff]"
       }
     },
     {
@@ -106,7 +114,7 @@
       "priority": 500,
       "region": "prompt_box_body",
       "when": {
-        "lineRegex": "^\\s*[❯›]"
+        "lineRegex": "^\\s*[\u276f\u203a]"
       }
     }
   ]

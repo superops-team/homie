@@ -3,7 +3,8 @@ import Foundation
 /// Everything Homie needs to know about ONE agent CLI, declared as data.
 ///
 /// This is the `"agent"` block of a detection manifest
-/// (`Sources/HomieCore/Resources/manifests/<id>.json`). It exists so that
+/// (`Sources/HomieCore/Resources/manifests/<id>.json`, generated from
+/// `homie/crates/homie-engine/manifests/<id>.json`). It exists so that
 /// adding an agent is a file drop rather than a patch across the daemon, the
 /// CLI, the protocol and the Rust client — which is what it used to be when
 /// `AgentKind` was a closed Swift enum.
@@ -27,12 +28,14 @@ public struct AgentDescriptor: Codable, Hashable, Sendable {
     /// How to reattach to a previous conversation from the command line.
     public struct Resume: Codable, Hashable, Sendable {
         public enum Style: String, Codable, Hashable, Sendable {
-            /// `<binary> --resume <id>` — a flag and the id as separate argv words.
+            /// `<binary> --resume [id]` — a flag and, when known, the id as a
+            /// separate argv word. Without an id the Rust Engine emits the bare
+            /// token, which is how several CLIs spell "continue latest".
             case flag
             /// `<binary> --resume=<id>` — some CLIs only accept the joined form
             /// (Copilot).
             case flagJoined
-            /// `<binary> resume <id>` — a subcommand carries it (Codex).
+            /// `<binary> resume <id>` — a subcommand carries it.
             case subcommand
             /// `<binary> resume` with no id: the CLI picks its own latest
             /// conversation. Only usable where an id can never be learned, and
@@ -55,6 +58,21 @@ public struct AgentDescriptor: Codable, Hashable, Sendable {
             case .flag, .subcommand: [token, id]
             case .flagJoined: ["\(token)=\(id)"]
             case .latest: [token]
+            }
+        }
+
+        /// argv fragment when Homie does not have a provider-native id. Mirrors
+        /// the Rust Engine's `resume_args(None)` behavior for generated mirrors.
+        public func argv(id: String?) -> [String]? {
+            switch (style, id) {
+            case (.flag, .some(let id)), (.subcommand, .some(let id)):
+                [token, id]
+            case (.flag, .none), (.latest, _):
+                [token]
+            case (.flagJoined, .some(let id)):
+                ["\(token)=\(id)"]
+            case (.flagJoined, .none), (.subcommand, .none):
+                nil
             }
         }
     }
@@ -215,25 +233,16 @@ public struct AgentDescriptor: Codable, Hashable, Sendable {
 
     /// Whether Homie can actually resume this agent's conversations.
     ///
-    /// A resume spec alone isn't enough — most CLIs accept `--resume <id>` but
-    /// give us no way to LEARN an id, and a Resume button that can never build
-    /// a command line is worse than no button. So this also requires a source
-    /// for the conversation id: a caller-minted UUID at spawn, or a hook/notify
-    /// channel that reports one.
-    ///
-    /// `.latest` is the exception, and the reason this isn't a one-line check:
-    /// it means "reopen whatever this CLI considers the most recent
-    /// conversation", so it needs no id at all and `resumeArgv` already builds
-    /// it without one. Gating it behind an id source demoted agents that can
-    /// resume perfectly well — Cursor mints its chat ids server-side yet
-    /// `cursor-agent resume` reopens the last chat regardless.
-    ///
-    /// This is only sound because sessions are spawned in their own cwd, which
-    /// is the scope these CLIs use for "most recent". Declare `.latest` only
-    /// for an agent whose help output actually says so.
+    /// A resume spec alone is not always enough: joined forms require an id, and
+    /// some CLIs have id-targeted flags that cannot be built unless Homie knows a
+    /// provider-native id. The generated Rust manifest mirror uses `flag` for
+    /// both `--resume <id>` and bare-token latest-session forms because the Rust
+    /// Engine emits `[token]` when no id is known and `[token, id]` when it is.
     public var canResume: Bool {
         guard let resume else { return false }
-        if resume.style == .latest { return true }
+        if resume.argv(id: Optional<String>.none) != nil {
+            return true
+        }
         return sessionIDFlag != nil || injection.claudeHooks || injection.codexNotify
     }
 
