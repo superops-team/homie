@@ -20,8 +20,8 @@ use gpui::{
 use homie_proto::{AgentKind as ProtoAgentKind, HistoryEntry, HostEntry, HostsConfig};
 use homie_term::theme::{TermTheme, ThemeAppearance};
 use homie_ui::{
-    AgentLogo, Fill, FloatingSurface, HairlineDivider, Ink, LoadingIndicator, Metrics, Palette,
-    Radius, SemanticColors, Space, Typo,
+    AgentLogo, Button, ButtonSize, ButtonVariant, Fill, FloatingSurface, HairlineDivider, Ink,
+    LoadingIndicator, Metrics, Palette, Radius, SemanticColors, Space, Typo,
 };
 use tokio::runtime::Runtime;
 
@@ -1555,28 +1555,30 @@ impl UtilitySurfaces {
                         )
                         .child(
                             div()
-                                .id("close-settings")
-                                .debug_selector(|| "close-settings".into())
                                 .absolute()
+                                .debug_selector(|| "close-settings".into())
                                 .top(px(8.0))
                                 .right(px(Metrics::TOOLBAR_EDGE_INSET))
-                                .size(px(Metrics::TOOLBAR_CONTROL_SIZE))
-                                .rounded(px(Radius::BADGE))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .hover(move |style| style.bg(Fill::subtle(colors)))
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.close_surface(cx);
-                                }))
-                                .child(sf_symbol_weighted(
-                                    "xmark",
-                                    13.5,
-                                    SymbolWeight::Bold,
-                                    colors.secondary,
-                                )),
+                                .child(
+                                    Button::new(
+                                        "close-settings",
+                                        colors,
+                                        sf_symbol_weighted(
+                                            "xmark",
+                                            13.5,
+                                            SymbolWeight::Bold,
+                                            colors.secondary,
+                                        ),
+                                    )
+                                    .variant(ButtonVariant::Quiet)
+                                    .size(ButtonSize::Toolbar)
+                                    .on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            this.close_surface(cx);
+                                        },
+                                    )),
+                                ),
                         ),
                 ),
         )

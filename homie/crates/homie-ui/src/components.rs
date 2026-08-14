@@ -8,6 +8,164 @@ use gpui::{
 
 use crate::{Fill, IconName, Radius, SemanticColors, rgba_f32};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonVariant {
+    Quiet,
+    Secondary,
+    Primary,
+    Destructive,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonSize {
+    Compact,
+    Toolbar,
+}
+
+#[derive(IntoElement)]
+pub struct Button {
+    id: SharedString,
+    colors: SemanticColors,
+    variant: ButtonVariant,
+    size: ButtonSize,
+    disabled: bool,
+    child: AnyElement,
+    on_click: Option<Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static>>,
+}
+
+impl Button {
+    pub fn new(
+        id: impl Into<SharedString>,
+        colors: SemanticColors,
+        child: impl IntoElement,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            colors,
+            variant: ButtonVariant::Secondary,
+            size: ButtonSize::Compact,
+            disabled: false,
+            child: child.into_any_element(),
+            on_click: None,
+        }
+    }
+
+    pub const fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    pub const fn size(mut self, size: ButtonSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    pub const fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn style(colors: SemanticColors, variant: ButtonVariant, disabled: bool) -> ButtonStyle {
+        let mut style = match variant {
+            ButtonVariant::Quiet => ButtonStyle {
+                background: colors.primary.alpha(0.0),
+                hover_background: colors.primary.alpha(0.06),
+                border: colors.primary.alpha(0.0),
+                text: colors.secondary,
+            },
+            ButtonVariant::Secondary => ButtonStyle {
+                background: colors.primary.alpha(0.04),
+                hover_background: colors.primary.alpha(0.09),
+                border: colors.primary.alpha(0.10),
+                text: colors.secondary,
+            },
+            ButtonVariant::Primary => ButtonStyle {
+                background: colors.primary.alpha(0.88),
+                hover_background: colors.primary,
+                border: colors.primary.alpha(0.0),
+                text: colors.background,
+            },
+            ButtonVariant::Destructive => ButtonStyle {
+                background: rgba_f32(0.95, 0.16, 0.16, 0.12),
+                hover_background: rgba_f32(0.95, 0.16, 0.16, 0.18),
+                border: rgba_f32(0.95, 0.16, 0.16, 0.22),
+                text: rgba_f32(1.0, 0.45, 0.45, 1.0),
+            },
+        };
+        if disabled {
+            style.background = style.background.alpha(style.background.a * 0.55);
+            style.hover_background = style.background;
+            style.border = style.border.alpha(style.border.a * 0.55);
+            style.text = style.text.alpha(0.42);
+        }
+        style
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ButtonStyle {
+    pub background: Rgba,
+    pub hover_background: Rgba,
+    pub border: Rgba,
+    pub text: Rgba,
+}
+
+impl ButtonSize {
+    const fn height(self) -> f32 {
+        match self {
+            Self::Compact => 26.0,
+            Self::Toolbar => 24.0,
+        }
+    }
+
+    const fn horizontal_padding(self) -> f32 {
+        match self {
+            Self::Compact => 9.0,
+            Self::Toolbar => 0.0,
+        }
+    }
+}
+
+impl RenderOnce for Button {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let style = Self::style(self.colors, self.variant, self.disabled);
+        let mut button = div()
+            .id(self.id)
+            .h(px(self.size.height()))
+            .px(px(self.size.horizontal_padding()))
+            .rounded(px(Radius::BADGE))
+            .border_1()
+            .border_color(style.border)
+            .bg(style.background)
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(11.0))
+            .text_color(style.text)
+            .child(self.child);
+        if self.size == ButtonSize::Toolbar {
+            button = button.w(px(24.0));
+        }
+        if !self.disabled {
+            button = button
+                .cursor_pointer()
+                .hover(move |style_ref| style_ref.bg(style.hover_background));
+            if let Some(on_click) = self.on_click {
+                button = button.on_click(on_click);
+            }
+        }
+        button
+    }
+}
+
 /// Shared, platform-independent activity mark for bounded asynchronous work.
 /// Repeating GPUI animations automatically become static when Reduce Motion
 /// is enabled, so callers do not need their own timer or accessibility path.
@@ -278,5 +436,23 @@ mod tests {
         assert_eq!(marquee_progress(0.10, 0.20, 0.80), 0.0);
         assert!((marquee_progress(0.50, 0.20, 0.80) - 0.5).abs() < f32::EPSILON);
         assert_eq!(marquee_progress(0.90, 0.20, 0.80), 1.0);
+    }
+
+    #[test]
+    fn button_disabled_style_suppresses_hover_delta() {
+        let colors = SemanticColors::dark();
+        let style = Button::style(colors, ButtonVariant::Secondary, true);
+        assert_eq!(style.background, style.hover_background);
+        assert!(style.text.a < colors.secondary.a);
+    }
+
+    #[test]
+    fn button_variants_have_distinct_emphasis() {
+        let colors = SemanticColors::dark();
+        let quiet = Button::style(colors, ButtonVariant::Quiet, false);
+        let secondary = Button::style(colors, ButtonVariant::Secondary, false);
+        let primary = Button::style(colors, ButtonVariant::Primary, false);
+        assert!(quiet.background.a < secondary.background.a);
+        assert!(secondary.background.a < primary.background.a);
     }
 }
