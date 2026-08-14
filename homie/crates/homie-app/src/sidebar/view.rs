@@ -3386,20 +3386,7 @@ impl Render for Sidebar {
             let mut store = self.store.write().expect("session store lock poisoned");
             store.sidebar_projection()
         };
-        self.shortcut_ranks.clear();
-        let session_count = projection.ordered_sessions.len();
-        for (index, session) in projection.ordered_sessions.iter().enumerate() {
-            let shortcut = if index < 8 {
-                Some(index + 1)
-            } else if index + 1 == session_count {
-                Some(9)
-            } else {
-                None
-            };
-            if let Some(shortcut) = shortcut {
-                self.shortcut_ranks.insert(session.id.clone(), shortcut);
-            }
-        }
+        self.shortcut_ranks = shortcut_ranks(&projection.ordered_sessions);
         retain_live_glyphs(&mut self.glyphs, &projection.display_order);
         let mut list = div()
             .id("sidebar-list")
@@ -3895,6 +3882,24 @@ fn retain_live_glyphs<T>(glyphs: &mut HashMap<SessionId, T>, live: &[SessionId])
     glyphs.retain(|id, _| live.contains(id));
 }
 
+fn shortcut_ranks(sessions: &[Arc<SessionRecord>]) -> HashMap<SessionId, usize> {
+    let session_count = sessions.len();
+    sessions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, session)| {
+            let shortcut = if index < 8 {
+                Some(index + 1)
+            } else if index + 1 == session_count {
+                Some(9)
+            } else {
+                None
+            }?;
+            Some((session.id.clone(), shortcut))
+        })
+        .collect()
+}
+
 fn clamp_path(path: &str) -> String {
     if path.chars().count() <= 40 {
         return path.into();
@@ -4127,6 +4132,53 @@ mod tests {
         assert!(glyphs.contains_key(&first));
         assert!(glyphs.contains_key(&second));
         assert!(!glyphs.contains_key(&stale));
+    }
+
+    fn shortcut_session(id: &str) -> Arc<SessionRecord> {
+        Arc::new(SessionRecord {
+            id: SessionId::new(id),
+            kind: ProtoAgentKind::CLAUDE_CODE,
+            cwd: "/tmp".into(),
+            project_id: ProjectId::new("test"),
+            worktree_path: None,
+            git_branch: None,
+            title: id.into(),
+            title_source: homie_proto::TitleSource::Placeholder,
+            agent_session_id: None,
+            transcript_path: None,
+            status: homie_proto::SessionStatus::Idle,
+            needs_input: None,
+            resumability: homie_proto::Resumability::Live,
+            parent: None,
+            created_at: homie_proto::DateMillis(0.0),
+            updated_at: homie_proto::DateMillis(0.0),
+            last_turn_completed_at: None,
+            last_seen_at: None,
+            pinned: false,
+            archived_at: None,
+            host: None,
+            remote_persistence: None,
+            hibernation: None,
+            memory_bytes: None,
+            artifacts: None,
+            pull_requests: None,
+            listening_ports: None,
+            foreground_agent: None,
+        })
+    }
+
+    #[test]
+    fn shortcut_rank_maps_first_eight_and_last_session() {
+        let sessions = (1..=10)
+            .map(|index| shortcut_session(&format!("s{index}")))
+            .collect::<Vec<_>>();
+
+        let ranks = shortcut_ranks(&sessions);
+
+        assert_eq!(ranks.get(&SessionId::new("s1")), Some(&1));
+        assert_eq!(ranks.get(&SessionId::new("s8")), Some(&8));
+        assert_eq!(ranks.get(&SessionId::new("s9")), None);
+        assert_eq!(ranks.get(&SessionId::new("s10")), Some(&9));
     }
 
     #[gpui::test]
