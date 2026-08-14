@@ -731,8 +731,7 @@ impl ControlServer {
             // No binary in the manifest: the caller has to say what to run.
             None if !argv.is_empty() => {
                 let mut spec = crate::pty::PtySpec::new(argv.clone(), &cwd_path);
-                spec.env = inherited;
-                spec.env.retain(|(key, _)| key != "NO_COLOR");
+                spec.env = shell_pty_environment(inherited);
                 spec
             }
             None => {
@@ -939,10 +938,7 @@ impl ControlServer {
                 .ok_or_else(|| ControlError::internal("remote descriptor has no binary"))?
         } else {
             let mut spec = crate::pty::PtySpec::new(argv, &cwd);
-            spec.env = inherited;
-            spec.env.retain(|(key, _)| key != "NO_COLOR");
-            spec.env.retain(|(key, _)| key != "TERM");
-            spec.env.push(("TERM".into(), "xterm-256color".into()));
+            spec.env = shell_pty_environment(inherited);
             spec
         };
         if let (Some(cols), Some(rows)) = (p.initial_cols, p.initial_rows) {
@@ -2429,6 +2425,12 @@ fn io_control_error(error: std::io::Error) -> ControlError {
     }
 }
 
+fn shell_pty_environment(mut inherited: Vec<(String, String)>) -> Vec<(String, String)> {
+    inherited.retain(|(key, _)| key != "TERM" && key != "NO_COLOR");
+    inherited.push(("TERM".into(), "xterm-256color".into()));
+    inherited
+}
+
 fn history_entry_to_wire(entry: crate::history::HistoryEntry) -> homie_proto::HistoryEntry {
     homie_proto::HistoryEntry {
         id: entry.id,
@@ -2901,6 +2903,74 @@ mod tests {
             listening_ports: None,
             foreground_agent: None,
         }
+    }
+
+    fn screen_contains(server: &ControlServer, session_id: &str, needle: &str) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let screen = ok_of(call(
+                server,
+                homie_proto::Method::SESSION_READ_SCREEN,
+                Some(json!({ "sessionID": session_id })),
+            ));
+            if screen["text"]
+                .as_str()
+                .is_some_and(|text| text.contains(needle))
+            {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
+    #[test]
+    fn local_pty_environment_sets_term_and_removes_no_color() {
+        let env = shell_pty_environment(vec![
+            ("TERM".into(), "dumb".into()),
+            ("NO_COLOR".into(), "1".into()),
+            ("PATH".into(), "/bin".into()),
+        ]);
+
+        assert_eq!(
+            env.iter()
+                .filter(|(key, _)| key == "TERM")
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["xterm-256color"]
+        );
+        assert!(!env.iter().any(|(key, _)| key == "NO_COLOR"));
+        assert!(
+            env.iter()
+                .any(|(key, value)| key == "PATH" && value == "/bin")
+        );
+    }
+
+    #[test]
+    fn local_shell_spawn_sets_term() {
+        let temp = tempfile::tempdir().expect("temp");
+        let server = server(temp.path()).with_logs_dir(temp.path().join("logs"));
+        let spawned = ok_of(call(
+            &server,
+            homie_proto::Method::SESSION_SPAWN,
+            Some(json!({
+                "kind": { "shell": {} },
+                "cwd": "/tmp",
+                "argv": ["/bin/sh", "-c", "printf 'term=%s\\n' \"$TERM\"; sleep 30"],
+            })),
+        ));
+        let session_id = spawned["id"].as_str().expect("session id");
+
+        assert!(
+            screen_contains(&server, session_id, "term=xterm-256color"),
+            "local shell output should include TERM=xterm-256color"
+        );
+
+        let _ = ok_of(call(
+            &server,
+            homie_proto::Method::SESSION_KILL,
+            Some(json!({ "sessionID": session_id })),
+        ));
     }
 
     /// Round-trips one request through the dispatcher the way a client would.
