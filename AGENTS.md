@@ -45,6 +45,36 @@ Meaningful changes must follow this sequence:
 
 Small documentation-only changes may use the lightweight version of this workflow, but they still need a clear source document and Beads linkage when they establish or change project process.
 
+## Worktree Build Cache Rules
+
+Homie worktrees must share one project-level Cargo build output directory.
+Do not let every worktree create its own `homie/target` tree.
+
+The local project-level shared target directory is:
+
+```text
+/Users/bytedance/workspace/github/homie-worktrees/.shared/homie-target
+```
+
+When creating a new Homie worktree, create `homie/target` as a symlink to that
+shared directory before running Cargo or Homie packaging scripts:
+
+```bash
+mkdir -p /Users/bytedance/workspace/github/homie-worktrees/.shared
+mkdir -p <new-worktree>/homie
+ln -s /Users/bytedance/workspace/github/homie-worktrees/.shared/homie-target <new-worktree>/homie/target
+```
+
+If a worktree already has a real `homie/target` directory, inspect it first. If
+it is disposable build output, move or remove it, then replace it with the
+symlink. Never commit the symlink or the shared target directory; keep
+`homie/target` ignored through local exclude rules when needed.
+
+This symlink rule is preferred over writing `CARGO_TARGET_DIR` into tracked
+repository configuration because existing Homie scripts default to
+`homie/target`, and the symlink keeps those scripts and direct Cargo commands on
+the same shared build cache.
+
 ## Beads Requirements Management
 
 This repository uses Beads for local issue and dependency tracking. Use `bd` commands from the repository root.
