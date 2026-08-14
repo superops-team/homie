@@ -242,8 +242,9 @@ impl RootView {
                 terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
             });
         }
+        let mut child_subscriptions = Vec::new();
         if let Some(terminal) = &terminal {
-            cx.subscribe(terminal, |this, _, event, cx| match event {
+            child_subscriptions.push(cx.subscribe(terminal, |this, _, event, cx| match event {
                 TerminalPaneEvent::ToggleSidebar => {
                     this.sidebar.update(cx, |sidebar, cx| sidebar.toggle(cx));
                 }
@@ -257,38 +258,40 @@ impl RootView {
                         });
                     }
                 }
-            })
-            .detach();
+            }));
         }
-        cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| {
-            if matches!(event, SidebarEvent::SessionActivated)
-                && let Some(terminal) = &this.terminal
-            {
-                terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
-                this.sync_auxiliary_terminal(window, cx);
-            }
-            if let SidebarEvent::Update(command) = event {
-                this.services.updates.send(command.clone());
-            }
-            if matches!(event, SidebarEvent::OpenSettings)
-                && let Some(surfaces) = &this.utility_surfaces
-            {
-                surfaces.update(cx, |surfaces, cx| surfaces.open_settings(cx));
-            }
-            if matches!(event, SidebarEvent::AddRemoteHost)
-                && let Some(surfaces) = &this.utility_surfaces
-            {
-                surfaces.update(cx, |surfaces, cx| {
-                    surfaces.open_add_remote_host(window, cx);
-                });
-            }
-            if matches!(event, SidebarEvent::VisibilityChanged) {
-                this.begin_sidebar_slide(cx);
-            }
-            cx.notify();
-        })
-        .detach();
-        cx.subscribe_in(
+        child_subscriptions.push(cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, event, window, cx| {
+                if matches!(event, SidebarEvent::SessionActivated)
+                    && let Some(terminal) = &this.terminal
+                {
+                    terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
+                    this.sync_auxiliary_terminal(window, cx);
+                }
+                if let SidebarEvent::Update(command) = event {
+                    this.services.updates.send(command.clone());
+                }
+                if matches!(event, SidebarEvent::OpenSettings)
+                    && let Some(surfaces) = &this.utility_surfaces
+                {
+                    surfaces.update(cx, |surfaces, cx| surfaces.open_settings(cx));
+                }
+                if matches!(event, SidebarEvent::AddRemoteHost)
+                    && let Some(surfaces) = &this.utility_surfaces
+                {
+                    surfaces.update(cx, |surfaces, cx| {
+                        surfaces.open_add_remote_host(window, cx);
+                    });
+                }
+                if matches!(event, SidebarEvent::VisibilityChanged) {
+                    this.begin_sidebar_slide(cx);
+                }
+                cx.notify();
+            },
+        ));
+        child_subscriptions.push(cx.subscribe_in(
             &launcher,
             window,
             |this, _, _: &LauncherEvent, window, cx| {
@@ -301,10 +304,9 @@ impl RootView {
                 // make RootView swap the terminal branch back into the row.
                 cx.notify();
             },
-        )
-        .detach();
+        ));
         if let Some(navigation) = &navigation {
-            cx.subscribe(navigation, |this, _, event, cx| match event {
+            child_subscriptions.push(cx.subscribe(navigation, |this, _, event, cx| match event {
                 NavigationEvent::ToggleSidebar => {
                     this.sidebar.update(cx, |sidebar, cx| sidebar.toggle(cx));
                 }
@@ -326,16 +328,14 @@ impl RootView {
                 NavigationEvent::CheckForUpdates => {
                     this.services.updates.check(true);
                 }
-            })
-            .detach();
+            }));
         }
         if let Some(inspector) = &inspector {
-            cx.subscribe(inspector, |this, _, event, cx| {
+            child_subscriptions.push(cx.subscribe(inspector, |this, _, event, cx| {
                 if matches!(event, InspectorEvent::Close) {
                     this.set_inspector_open(false, cx);
                 }
-            })
-            .detach();
+            }));
         }
 
         let mut status_events = services.store.status_events();
@@ -562,7 +562,10 @@ impl RootView {
             menu_bar,
             #[cfg(target_os = "macos")]
             notifier,
-            _subscriptions: std::iter::once(activation).chain(bounds_observer).collect(),
+            _subscriptions: std::iter::once(activation)
+                .chain(bounds_observer)
+                .chain(child_subscriptions)
+                .collect(),
             _service_events: service_events,
             _surface_sync: surface_sync,
             _workbench_sync: workbench_sync,
