@@ -1264,7 +1264,7 @@ impl WorkbenchInspector {
                     colors,
                     "shippingbox",
                     "No artifacts yet",
-                    "Pull requests, previews, Linear issues, links, and local ports appear here as they’re discovered.",
+                    "Pull requests, previews, Linear issues, and local ports appear here as they’re discovered.",
                 )
                 .into_any_element();
         }
@@ -1298,7 +1298,10 @@ impl WorkbenchInspector {
             }
         }
         if let Some(artifacts) = session.artifacts.as_deref() {
-            for artifact in artifacts {
+            for artifact in artifacts
+                .iter()
+                .filter(|artifact| artifact_visible(artifact))
+            {
                 let represented_by_status = artifact.kind == ArtifactKind::PullRequest
                     && session.pull_requests.as_deref().is_some_and(|statuses| {
                         statuses.iter().any(|status| status.url == artifact.url)
@@ -3711,6 +3714,10 @@ fn artifact_icon(symbol: &'static str, colors: SemanticColors) -> AnyElement {
 
 fn artifact_count(session: &SessionRecord) -> usize {
     let artifacts = session.artifacts.as_deref().unwrap_or_default();
+    let visible_artifacts = artifacts
+        .iter()
+        .filter(|artifact| artifact_visible(artifact))
+        .count();
     let ports = session.listening_ports.as_deref().unwrap_or_default();
     let status_only_pull_requests = session
         .pull_requests
@@ -3723,7 +3730,11 @@ fn artifact_count(session: &SessionRecord) -> usize {
             })
         })
         .count();
-    artifacts.len() + ports.len() + status_only_pull_requests
+    visible_artifacts + ports.len() + status_only_pull_requests
+}
+
+fn artifact_visible(artifact: &SessionArtifact) -> bool {
+    !matches!(artifact.kind, ArtifactKind::Link | ArtifactKind::Unknown)
 }
 
 fn ui_agent_kind(kind: &ProtoAgentKind) -> AgentKind {
@@ -4332,6 +4343,39 @@ fn render_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn inspector_fixture_session() -> SessionRecord {
+        SessionRecord {
+            id: SessionId::new("inspector-fixture"),
+            kind: ProtoAgentKind::SHELL,
+            cwd: "/tmp".to_owned(),
+            project_id: homie_proto::ProjectId::new("p"),
+            worktree_path: None,
+            git_branch: None,
+            title: "fixture".to_owned(),
+            title_source: homie_proto::TitleSource::Placeholder,
+            agent_session_id: None,
+            transcript_path: None,
+            status: SessionStatus::Idle,
+            needs_input: None,
+            resumability: homie_proto::Resumability::NotResumable,
+            parent: None,
+            created_at: DateMillis(0.0),
+            updated_at: DateMillis(0.0),
+            last_turn_completed_at: None,
+            last_seen_at: None,
+            pinned: false,
+            archived_at: None,
+            host: None,
+            remote_persistence: None,
+            hibernation: None,
+            memory_bytes: None,
+            artifacts: None,
+            pull_requests: None,
+            listening_ports: None,
+            foreground_agent: None,
+        }
+    }
     use crate::sidebar::{PreviewScenario, SidebarPreviewFixture};
     use gpui::{Entity, Modifiers, TestAppContext};
     use homie_proto::DateMillis;
@@ -4476,6 +4520,30 @@ mod tests {
         assert_eq!(artifact_title(&pull_request), "PR #42");
         assert_eq!(artifact_title(&issue), "DIR-19");
         assert_eq!(artifact_title(&preview), "feature-homie.vercel.app");
+    }
+
+    #[test]
+    fn generic_link_artifacts_are_hidden_from_the_inspector_count() {
+        let mut session = inspector_fixture_session();
+        session.artifacts = Some(vec![
+            SessionArtifact {
+                kind: ArtifactKind::Link,
+                url: "https://github.com".to_owned(),
+                first_seen_at: DateMillis(0.0),
+            },
+            SessionArtifact {
+                kind: ArtifactKind::Unknown,
+                url: "https://chatgpt.com".to_owned(),
+                first_seen_at: DateMillis(0.0),
+            },
+            SessionArtifact {
+                kind: ArtifactKind::Preview,
+                url: "https://preview.example.com".to_owned(),
+                first_seen_at: DateMillis(0.0),
+            },
+        ]);
+
+        assert_eq!(artifact_count(&session), 1);
     }
 
     #[test]

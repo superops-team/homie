@@ -40,10 +40,6 @@ impl DevBuildIdentity {
     pub(crate) fn window_title(&self) -> String {
         format!("homie dev — {}", self.label)
     }
-
-    pub(crate) fn marker_label(&self) -> &str {
-        &self.label
-    }
 }
 
 fn sanitized_label(value: &str) -> String {
@@ -70,7 +66,6 @@ mod tests {
 
         assert_eq!(identity.bundle_id(), "com.homie.homie.dev.abc1234");
         assert_eq!(identity.window_title(), "homie dev — worktree@abc1234");
-        assert_eq!(identity.marker_label(), "worktree@abc1234");
     }
 
     #[test]
@@ -98,6 +93,6 @@ mod tests {
         )
         .expect("valid dev identity");
 
-        assert_eq!(identity.marker_label(), "feature/devspoofed");
+        assert_eq!(identity.window_title(), "homie dev — feature/devspoofed");
     }
 }

@@ -8,16 +8,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, App, ClickEvent, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter,
-    FocusHandle, KeyBinding, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton, Render,
-    ScrollDelta, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Task, Window, actions,
-    div, font, prelude::*, px, rgba,
+    AnyElement, App, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
+    KeyBinding, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton, Render, ScrollDelta,
+    ScrollWheelEvent, SharedString, StatefulInteractiveElement, Task, Window, actions, div, font,
+    prelude::*, px, rgba,
 };
 use homie_client::attachment::{SessionAttachment, TerminalChunk};
+#[cfg(test)]
+use homie_proto::PrCheck;
 use homie_proto::grid::GridUpdate;
 use homie_proto::{
-    AgentKind as ProtoAgentKind, ArtifactKind, ExitReason, PrCheck, PullRequestStatus,
-    Resumability, RiskHint, SessionArtifact, SessionId, SessionRecord, SessionStatus,
+    AgentKind as ProtoAgentKind, ArtifactKind, ExitReason, PullRequestStatus, Resumability,
+    RiskHint, SessionArtifact, SessionId, SessionRecord, SessionStatus,
 };
 use homie_term::buffer::GridBuffer;
 use homie_term::element::{SharedGridBuffer, TerminalElement, TerminalReference};
@@ -31,8 +33,8 @@ use homie_term::repaint::{RepaintAction, RepaintPacer};
 use homie_term::scrollback::{WheelDelta, WheelEvent, WheelRoute};
 use homie_term::theme::TermTheme;
 use homie_ui::{
-    AgentKind as UiAgentKind, Fill, FloatingSurface, Ink, Metrics, Radius, SemanticColors,
-    StatusGlyph, StatusState, Typo,
+    AgentKind as UiAgentKind, Fill, FloatingSurface, Metrics, Radius, SemanticColors, StatusGlyph,
+    StatusState, Typo,
 };
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
@@ -52,9 +54,6 @@ const GRID_VERTICAL_PADDING: f32 = 12.0;
 // paint bounds and therefore cannot be offered to the PTY as a text column.
 const GRID_LAYOUT_HORIZONTAL_CHROME: f32 = 3.0;
 const GRID_LAYOUT_VERTICAL_CHROME: f32 = 2.0;
-const TOOLBAR_MAX_VISIBLE_LINKS: usize = 4;
-const TOOLBAR_LINK_MAX_WIDTH: f32 = 176.0;
-const TOOLBAR_OVERFLOW_WIDTH: f32 = 50.0;
 const REATTACH_DELAY: Duration = Duration::from_millis(500);
 /// Burst ceiling for repaints (~60fps). The pacer paints the first frame of a
 /// burst and the next response after interactive input immediately; this only
@@ -326,50 +325,6 @@ impl PaneChip {
     }
 }
 
-fn toolbar_chip_width(chip: &PaneChip) -> f32 {
-    let label_width = chip.label.chars().count().min(24) as f32 * 6.2;
-    (label_width + 34.0).clamp(68.0, TOOLBAR_LINK_MAX_WIDTH)
-}
-
-fn toolbar_visible_chip_count(
-    chips: &[PaneChip],
-    viewport_width: f32,
-    sidebar_visible: bool,
-) -> usize {
-    if chips.is_empty() {
-        return 0;
-    }
-
-    // Protect a readable session title, branch/host metadata, agent identity,
-    // and (when needed) the macOS traffic-light lane + sidebar reveal button.
-    let fixed_chrome = if sidebar_visible { 560.0 } else { 673.0 };
-    let budget = (viewport_width - fixed_chrome).clamp(TOOLBAR_OVERFLOW_WIDTH, 720.0);
-    let limit = chips.len().min(TOOLBAR_MAX_VISIBLE_LINKS);
-    let mut used = 0.0;
-    let mut visible = 0;
-
-    for (index, chip) in chips.iter().take(limit).enumerate() {
-        let gap = if index == 0 {
-            0.0
-        } else {
-            Metrics::TOOLBAR_COMPACT_GAP
-        };
-        let candidate = used + gap + toolbar_chip_width(chip);
-        let overflow = if index + 1 < chips.len() {
-            Metrics::TOOLBAR_COMPACT_GAP + TOOLBAR_OVERFLOW_WIDTH
-        } else {
-            0.0
-        };
-        if candidate + overflow > budget {
-            break;
-        }
-        used = candidate;
-        visible += 1;
-    }
-
-    visible
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttachmentState {
     Attaching,
@@ -511,8 +466,6 @@ pub struct TerminalPane {
     pane_tx: mpsc::UnboundedSender<PaneEvent>,
     focus: FocusHandle,
     glyphs: HashMap<SessionId, Entity<StatusGlyph>>,
-    open_checks_for: Option<String>,
-    overflow_open: bool,
     /// Paced PTY resizes: window and sidebar drags relayout every frame, but
     /// grid frames only leave the daemon every 50ms, so intermediate sizes are
     /// coalesced onto that cadence rather than dropped (see [`RESIZE_CADENCE`]).
@@ -653,8 +606,6 @@ impl TerminalPane {
             pane_tx,
             focus,
             glyphs: HashMap::new(),
-            open_checks_for: None,
-            overflow_open: false,
             pending_resizes: HashMap::new(),
             resize_flush: None,
             resize_flush_armed: false,
@@ -1812,8 +1763,6 @@ impl TerminalPane {
     fn render_header(
         &self,
         session: &SessionRecord,
-        chips: &[PaneChip],
-        visible_chip_count: usize,
         colors: SemanticColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1831,42 +1780,6 @@ impl TerminalPane {
         let show_sidebar = shell_controls && !self.sidebar_visible;
         let sidebar_reveal = show_sidebar.then(|| self.render_sidebar_reveal_control(colors, cx));
         let inspector_open = self.inspector_open;
-        let visible_chip_count = visible_chip_count.min(chips.len());
-        let overflow_count = chips.len().saturating_sub(visible_chip_count);
-        let mut toolbar_links = div()
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(Metrics::TOOLBAR_COMPACT_GAP));
-        for chip in chips.iter().take(visible_chip_count).cloned() {
-            toolbar_links = toolbar_links.child(self.render_chip(chip, colors, cx));
-        }
-        if overflow_count > 0 {
-            toolbar_links = toolbar_links.child(
-                div()
-                    .id("terminal-chip-overflow")
-                    .h(px(Metrics::TOOLBAR_CHIP_HEIGHT))
-                    .px(px(6.0))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(Metrics::TOOLBAR_COMPACT_GAP))
-                    .rounded(px(Radius::CHIP))
-                    .bg(Fill::subtle(colors))
-                    .text_size(px(Typo::META.size))
-                    .text_color(colors.secondary)
-                    .cursor_pointer()
-                    .hover(move |button| button.bg(colors.primary.alpha(0.10)))
-                    .child(sf_symbol("ellipsis", 10.0, colors.secondary))
-                    .child(format!("+{overflow_count}"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.overflow_open = !this.overflow_open;
-                        this.open_checks_for = None;
-                        cx.notify();
-                        cx.stop_propagation();
-                    })),
-            );
-        }
         div()
             .h(px(Metrics::TITLE_BAR))
             .flex_none()
@@ -1932,8 +1845,7 @@ impl TerminalPane {
                                 .child(sf_symbol("network", 9.0, colors.secondary))
                                 .child(host),
                         )
-                    })
-                    .when(!chips.is_empty(), |title| title.child(toolbar_links)),
+                    }),
             )
             .child(
                 div()
@@ -1984,65 +1896,6 @@ impl TerminalPane {
                         )
                     }),
             )
-            .into_any_element()
-    }
-
-    fn render_chip(
-        &self,
-        chip: PaneChip,
-        colors: SemanticColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let tint = chip.tint.map(chip_tint_color);
-        let background = tint.map_or_else(|| Fill::subtle(colors), |color| color.alpha(0.13));
-        let hover_background =
-            tint.map_or_else(|| colors.primary.alpha(0.10), |color| color.alpha(0.20));
-        let activation = chip.clone();
-        div()
-            .id(SharedString::from(chip.id.clone()))
-            .h(px(Metrics::TOOLBAR_CHIP_HEIGHT))
-            .max_w(px(TOOLBAR_LINK_MAX_WIDTH))
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(Metrics::TOOLBAR_COMPACT_GAP))
-            .rounded(px(Radius::CHIP))
-            .px(px(6.0))
-            .bg(background)
-            .hover(move |style| style.bg(hover_background))
-            .cursor_pointer()
-            .text_size(px(Typo::META.size))
-            .text_color(colors.secondary)
-            .child(sf_symbol(
-                chip.system_image,
-                10.0,
-                tint.unwrap_or(colors.secondary),
-            ))
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .max_w(px(138.0))
-                    .truncate()
-                    .child(chip.label),
-            )
-            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
-                if event.modifiers().alt {
-                    cx.write_to_clipboard(ClipboardItem::new_string(
-                        activation.copy_string.clone(),
-                    ));
-                } else if activation.checks.is_some() {
-                    this.open_checks_for = if this.open_checks_for.as_ref() == Some(&activation.id)
-                    {
-                        None
-                    } else {
-                        Some(activation.id.clone())
-                    };
-                    this.overflow_open = false;
-                    cx.notify();
-                } else if let Some(url) = activation.open_url.as_deref() {
-                    cx.open_url(url);
-                }
-            }))
             .into_any_element()
     }
 
@@ -2505,213 +2358,6 @@ impl TerminalPane {
             ))
             .into_any_element()
     }
-
-    fn render_checks_popover(
-        &self,
-        session: &SessionRecord,
-        colors: SemanticColors,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let chip_id = self.open_checks_for.as_ref()?;
-        let chip = PaneChip::for_session(session)
-            .into_iter()
-            .find(|chip| &chip.id == chip_id)?;
-        let pr = chip.checks?;
-        let total = pr.checks_passed + pr.checks_failed + pr.checks_pending;
-        let headline = if pr.checks_failed > 0 {
-            format!("{} of {total} checks failing", pr.checks_failed)
-        } else if pr.checks_pending > 0 {
-            format!("{} of {total} checks running", pr.checks_pending)
-        } else {
-            format!("All {total} checks passed")
-        };
-        let footer = comments_help(&pr);
-        let mut rows = div().flex().flex_col().py(px(4.0)).px(px(6.0));
-        for (index, check) in sorted_checks(&pr).into_iter().enumerate() {
-            let color = match check.result.as_str() {
-                "pass" => Ink::FRESH,
-                "fail" => Ink::DANGER,
-                _ => Ink::ATTENTION,
-            };
-            let word = match check.result.as_str() {
-                "fail" => "failed",
-                "pending" => "running",
-                _ => "",
-            };
-            let url = check.url.clone();
-            rows = rows.child(
-                div()
-                    .id(SharedString::from(format!("pr-check-{index}")))
-                    .h(px(24.0))
-                    .rounded(px(Radius::ROW))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .px(px(8.0))
-                    .hover(|style| style.bg(rgba(0xffffff0f)))
-                    .when(url.is_some(), |row| row.cursor_pointer())
-                    .child(div().size(px(6.0)).rounded(px(3.0)).bg(color))
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_size(px(Typo::ROW.size))
-                            .text_color(rgba(0xffffffd9))
-                            .child(check.name),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(Typo::META.size))
-                            .text_color(color)
-                            .child(word),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(url) = url.as_deref() {
-                            cx.open_url(url);
-                            this.open_checks_for = None;
-                            cx.notify();
-                        }
-                    })),
-            );
-        }
-        Some(
-            div()
-                .absolute()
-                .inset_0()
-                .child(div().absolute().inset_0().occlude().on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.open_checks_for = None;
-                        cx.notify();
-                        cx.stop_propagation();
-                    }),
-                ))
-                .child(
-                    div()
-                        .id("checks-popover")
-                        .absolute()
-                        .top(px(Metrics::TITLE_BAR + 4.0))
-                        .right(px(112.0))
-                        .w(px(300.0))
-                        .occlude()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                            this.open_checks_for = None;
-                            cx.notify();
-                        }))
-                        .child(FloatingSurface::new(
-                            colors,
-                            div()
-                                .flex()
-                                .flex_col()
-                                .child(
-                                    div()
-                                        .px(px(12.0))
-                                        .py(px(8.0))
-                                        .text_size(px(Typo::ROW_EMPHASIZED.size))
-                                        .font_weight(Typo::ROW_EMPHASIZED.weight)
-                                        .text_color(rgba(0xffffffff))
-                                        .child(headline),
-                                )
-                                .child(div().h(px(1.0)).bg(rgba(0xffffff14)))
-                                .child(div().max_h(px(246.0)).overflow_hidden().child(rows))
-                                .child(div().h(px(1.0)).bg(rgba(0xffffff14)))
-                                .child(
-                                    div()
-                                        .px(px(12.0))
-                                        .py(px(7.0))
-                                        .text_size(px(Typo::META.size))
-                                        .text_color(rgba(0xffffff99))
-                                        .child(footer),
-                                ),
-                        )),
-                )
-                .into_any_element(),
-        )
-    }
-
-    fn render_overflow(
-        &self,
-        session: &SessionRecord,
-        visible_chip_count: usize,
-        colors: SemanticColors,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let chips = PaneChip::for_session(session);
-        if !self.overflow_open || visible_chip_count >= chips.len() {
-            return None;
-        }
-        let mut list = div().flex().flex_col().p(px(6.0));
-        for (index, chip) in chips.into_iter().skip(visible_chip_count).enumerate() {
-            let url = chip.open_url.clone();
-            let checks = chip.checks.is_some();
-            let chip_id = chip.id.clone();
-            let tint = chip.tint.map(chip_tint_color);
-            list = list.child(
-                div()
-                    .id(SharedString::from(format!("overflow-chip-{index}")))
-                    .h(px(26.0))
-                    .rounded(px(Radius::ROW))
-                    .flex()
-                    .items_center()
-                    .gap(px(7.0))
-                    .px(px(8.0))
-                    .text_size(px(Typo::ROW.size))
-                    .text_color(rgba(0xffffffd9))
-                    .hover(|style| style.bg(rgba(0xffffff0f)))
-                    .cursor_pointer()
-                    .child(sf_symbol(
-                        chip.system_image,
-                        11.0,
-                        tint.unwrap_or(rgba(0xffffff99)),
-                    ))
-                    .child(div().min_w(px(0.0)).flex_1().truncate().child(chip.label))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if checks {
-                            this.open_checks_for = Some(chip_id.clone());
-                        } else if let Some(url) = url.as_deref() {
-                            cx.open_url(url);
-                        }
-                        this.overflow_open = false;
-                        cx.notify();
-                    })),
-            );
-        }
-        Some(
-            div()
-                .absolute()
-                .inset_0()
-                .child(div().absolute().inset_0().occlude().on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.overflow_open = false;
-                        cx.notify();
-                        cx.stop_propagation();
-                    }),
-                ))
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(Metrics::TITLE_BAR + 4.0))
-                        .right(px(112.0))
-                        .w(px(280.0))
-                        .occlude()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                            this.overflow_open = false;
-                            cx.notify();
-                        }))
-                        .child(FloatingSurface::new(
-                            colors,
-                            list.id("toolbar-overflow-list")
-                                .max_h(px(320.0))
-                                .overflow_y_scroll(),
-                        )),
-                )
-                .into_any_element(),
-        )
-    }
 }
 
 impl Render for TerminalPane {
@@ -2737,15 +2383,6 @@ impl Render for TerminalPane {
         let selected = self.selected_session();
 
         let content = if let Some(session) = selected {
-            let chips = PaneChip::for_session(&session);
-            let visible_chip_count = toolbar_visible_chip_count(
-                &chips,
-                self.viewport.map_or(900.0, |viewport| viewport.width),
-                self.sidebar_visible,
-            );
-            if visible_chip_count >= chips.len() {
-                self.overflow_open = false;
-            }
             let mut pane = div()
                 .relative()
                 .flex()
@@ -2756,13 +2393,7 @@ impl Render for TerminalPane {
                 .border_l_1()
                 .border_color(sidebar_colors.primary.alpha(0.08))
                 .bg(sidebar_colors.sidebar_surface())
-                .child(self.render_header(
-                    &session,
-                    &chips,
-                    visible_chip_count,
-                    sidebar_colors,
-                    cx,
-                ));
+                .child(self.render_header(&session, sidebar_colors, cx));
             let terminal_surface = div()
                 .relative()
                 .min_h(px(0.0))
@@ -2777,12 +2408,6 @@ impl Render for TerminalPane {
             pane = pane.child(terminal_surface);
             if let Some(find) = self.render_find_bar(&session, colors, cx) {
                 pane = pane.child(find);
-            }
-            if let Some(popover) = self.render_checks_popover(&session, colors, cx) {
-                pane = pane.child(popover);
-            }
-            if let Some(overflow) = self.render_overflow(&session, visible_chip_count, colors, cx) {
-                pane = pane.child(overflow);
             }
             pane.into_any_element()
         } else {
@@ -2947,16 +2572,6 @@ fn centered_symbol_message(system_image: &str, size: f32, message: &str) -> gpui
                     .child(message.to_owned()),
             )
         })
-}
-
-fn chip_tint_color(tint: ChipTint) -> gpui::Rgba {
-    match tint {
-        ChipTint::Red => Ink::DANGER,
-        ChipTint::Orange => rgba(0xf59e42ff),
-        ChipTint::Yellow => Ink::ATTENTION,
-        ChipTint::Green => Ink::FRESH,
-        ChipTint::Purple => rgba(0xa879f7ff),
-    }
 }
 
 fn terminal_key_event(event: &KeyDownEvent) -> Option<TermKeyEvent> {
@@ -3241,6 +2856,7 @@ fn comments_help(pr: &PullRequestStatus) -> String {
     parts.join(" · ")
 }
 
+#[cfg(test)]
 fn sorted_checks(pr: &PullRequestStatus) -> Vec<PrCheck> {
     let mut checks = pr.checks.clone().unwrap_or_default();
     checks.sort_by_key(|check| match check.result.as_str() {
@@ -3358,7 +2974,7 @@ fn exit_description(session: &SessionRecord) -> String {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Image, ImageFormat, KeyDownEvent, Keystroke, Modifiers, TestAppContext, point};
+    use gpui::{Image, ImageFormat, KeyDownEvent, Keystroke, Modifiers, TestAppContext};
     use homie_proto::{
         DateMillis, ExitInfo, NeedsInputDetail, NeedsInputKind, NeedsInputSource, SessionListResult,
     };
@@ -3649,11 +3265,6 @@ mod tests {
                 .position(|chip| chip.label == "docs.example.com")
                 .is_some_and(|index| index > 1)
         );
-        assert_eq!(
-            toolbar_visible_chip_count(&chips, 5_000.0, true),
-            TOOLBAR_MAX_VISIBLE_LINKS
-        );
-        assert_eq!(toolbar_visible_chip_count(&chips, 700.0, false), 0);
     }
 
     #[test]
@@ -3743,55 +3354,6 @@ mod tests {
             pane.reconcile_store_change(window, cx);
             assert!(pane.is_focused(window));
         });
-    }
-
-    #[gpui::test]
-    fn terminal_popovers_dismiss_on_an_outside_click(cx: &mut TestAppContext) {
-        let runtime = Arc::new(StoreRuntime::inert());
-        let tokio = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("test runtime"),
-        );
-        let mut session = fixture_session();
-        let url = "https://github.com/homie/homie/pull/42";
-        session.artifacts = Some(vec![SessionArtifact {
-            kind: ArtifactKind::PullRequest,
-            url: url.to_owned(),
-            first_seen_at: DateMillis(1.0),
-        }]);
-        session.pull_requests = Some(vec![pull_request(url)]);
-        let checks_id = PaneChip::for_session(&session)
-            .into_iter()
-            .find(|chip| chip.checks.is_some())
-            .expect("fixture should expose a checks chip")
-            .id;
-        {
-            let mut store = runtime.store.write().expect("session store lock poisoned");
-            store.upsert_session(session.clone());
-            store.select(session.id.clone());
-        }
-
-        let (pane, cx) = cx.add_window_view(move |window, cx| {
-            let mut pane = TerminalPane::new(runtime, tokio, window, cx);
-            pane.open_checks_for = Some(checks_id);
-            pane
-        });
-        let outside_panel = point(px(500.0), px(320.0));
-
-        cx.simulate_click(outside_panel, Modifiers::default());
-        assert_eq!(
-            pane.read_with(cx, |pane, _| pane.open_checks_for.clone()),
-            None
-        );
-
-        pane.update(cx, |pane, cx| {
-            pane.overflow_open = true;
-            cx.notify();
-        });
-        cx.simulate_click(outside_panel, Modifiers::default());
-        assert!(!pane.read_with(cx, |pane, _| pane.overflow_open));
     }
 
     #[test]
