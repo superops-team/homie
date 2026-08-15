@@ -144,6 +144,8 @@ trait AgentDriverControl {
 
 所有方法默认 unsupported，避免每个 provider 被迫实现所有能力。
 
+首阶段只实现抽象、fake driver 和 capability 查询链路，不接入真实 Codex/Claude/OpenCode provider。真实 provider driver 必须作为后续 child Bead/独立 OpenSpec 执行，并分别证明其 native API、权限请求、日志脱敏和 fallback 行为。
+
 ### 4.2 Session 集成
 
 `Session` 增加可选 `driver_handle`：
@@ -152,6 +154,13 @@ trait AgentDriverControl {
 - holder/PTY 仍照常启动；
 - driver event 进入 status reducer 或 store projection；
 - driver unavailable 不影响基础 terminal session。
+
+authority 规则：
+
+- holder/PTY/output log/screen reducer 仍是 session 生命周期和屏幕状态的事实源。
+- typed driver 只能提供增强控制与结构化 signal，不可绕过 holder 启动、session persistence 或现有安全清理。
+- driver capability 必须在 session snapshot 中以显式 `supported/unsupported` 暴露，不允许 UI 根据 agent id 猜测。
+- driver event 若与 screen reducer 冲突，第一阶段只记录 diagnostic，不改变 visible session status。
 
 ### 4.3 协议暴露
 
@@ -164,6 +173,12 @@ trait AgentDriverControl {
 
 第一阶段可以先内部接入 `agent.readiness` 或 session snapshot，避免协议一次扩太大。
 
+首阶段协议限制：
+
+- 可以只在现有 session snapshot/model 中暴露 capabilities。
+- 不新增 `session.steer` 或 `session.cancel_turn` wire method，除非 OpenSpec 证明 UI/CLI 调用路径、fallback、权限和测试证据齐备。
+- 不修改 MCP tool surface；MCP 暴露 typed control 另开变更。
+
 ### 4.4 Provider 优先级
 
 建议顺序：
@@ -172,6 +187,16 @@ trait AgentDriverControl {
 2. Claude Code：已有 hook/MCP 注入基础，但 stdin/permission 行为需谨慎。
 3. OpenCode：如本地 server/API 可用，适合 typed control。
 4. Cursor/Grok/Gemini 等后续评估。
+
+### 4.5 首阶段关闭口径
+
+`homie-kcq` 首阶段只关闭 capability layer 的最小可验证骨架：
+
+- `DriverCapabilities`、unsupported error、fake driver contract tests；
+- session snapshot 或等价查询能显示 fake driver capabilities；
+- 无 typed driver 的 manifest agent 行为不变；
+- typed cancel/steer 真实 provider 接入不在本阶段；
+- 安全脱敏规则写入 tests 或 review evidence。
 
 ## 5. 边界情况
 
@@ -210,7 +235,12 @@ trait AgentDriverControl {
 
 ### 7.2 集成测试
 
-- 使用 fake driver 启动 session，验证：\n  - capabilities 出现在 snapshot；\n  - steer event 被接受/拒绝；\n  - cancel fallback 生效。\n+- Codex/Claude 真实路径各至少一条 smoke，在本机可用 CLI 下运行。
+- 使用 fake driver 启动 session，验证：
+  - capabilities 出现在 snapshot；
+  - unsupported 操作返回稳定错误；
+  - driver event 不覆盖 screen reducer visible status；
+  - cancel/steer fallback 只在 OpenSpec 明确启用时才执行。
+- 真实 Codex/Claude smoke 不属于首阶段关闭条件；每个真实 provider 接入需要独立 child change。
 
 ### 7.3 回归测试
 
@@ -218,13 +248,24 @@ trait AgentDriverControl {
 - shell/generic 不暴露 typed capabilities。
 - holder adoption 后 capabilities 可恢复或明确降级。
 
+### 7.4 风险控制
+
+| 风险 | 控制 |
+|------|------|
+| typed driver 变成替代运行时，破坏 PTY continuity | 首阶段只做 fake driver 和 capability 查询，holder/PTY 仍是事实源 |
+| provider API 细节未确认导致抽象漂移 | 真实 provider 接入拆 child Bead；本阶段方法默认 unsupported |
+| event 泄漏敏感 prompt/token | fake event 和脱敏测试覆盖；禁止记录 Authorization、cookie、完整 prompt payload |
+| UI/MCP 一次性扩面 | 首阶段不新增 MCP tool，不新增 steer/cancel wire method |
+| capability 与 screen status 冲突 | typed event 只作 diagnostic/signal，不覆盖 visible status |
+
 ## 8. 验收标准
 
 1. Homie 有明确 typed driver capability 抽象。
 2. 至少一个 fake driver 覆盖 prompt/cancel/steer/model discovery 的 contract test。
 3. 现有 manifest agent 行为不回退。
 4. UI/CLI 能知道一个 session 是否支持 steer/cancel 等能力。
-5. Beads `homie-kcq` 更新为已验证状态后才可关闭。
+5. OpenSpec alignment 明确首阶段不接真实 provider、不改 MCP、不改变 session authority。
+6. Beads `homie-kcq` 更新为已验证状态后才可关闭。
 
 ## 9. Beads 追踪
 

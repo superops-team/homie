@@ -63,6 +63,9 @@ protocol-fixtures/
 - fixture 使用真实 wire JSON，不依赖聊天上下文。
 - 文件名表达 case 语义。
 - 每个 case 包含期望结构和规范化后的 JSON。
+- fixture 只作为测试契约，不作为运行时配置或打包资源。
+- fixture 不包含真实 prompt、Authorization、cookie、provider token、私有路径或用户会话内容。
+- 测试从仓库根目录定位 fixture；package/dev bundle 不复制该目录。
 
 ### 3.2 双端测试
 
@@ -98,6 +101,10 @@ Swift:
 
 ## 4. 实施步骤
 
+0. 进入实现前先补齐：
+   - `docs/verification/protocol-contract-golden-fixtures/spec-review-report.md`；
+   - `openspec/changes/protocol-contract-golden-fixtures/{plan.md,tasks.md,alignment-report.md}`；
+   - 对 `specs/engine-session-runtime.md` 的影响评估。若 fixture 只是固化现有 wire contract，可在 OpenSpec 中说明不改 durable spec；若发现 Swift/Rust 行为不一致，必须先更新 durable spec 再改代码。
 1. 创建 `protocol-fixtures/control-message/README.md`，写明 wire envelope 规则。
 2. 创建最小 roundtrip fixture 集：
    - request with params
@@ -146,13 +153,32 @@ swift test --package-path . --filter HomieProtocolTests
 ./scripts/check.sh
 ```
 
+### 6.4 首阶段关闭口径
+
+`homie-54o` 首阶段只关闭“现有 control protocol 行为被共享 fixture 守住”：
+
+- 覆盖现有 request/response/event envelope，不新增 wire method。
+- Rust/Swift 双端读取同一 fixture 目录并通过 focused tests。
+- `scripts/check.sh` 或等价本地 gate 能调用该漂移检查。
+- 不引入 schema/codegen，不迁移协议格式。
+
+### 6.5 风险控制
+
+| 风险 | 控制 |
+|------|------|
+| fixture 范围过大导致 P0 长期悬挂 | 首阶段只覆盖 envelope、null/empty params、error 和最大行边界 |
+| Swift/Rust 行为不一致时直接改实现 | 先在 durable spec 或 OpenSpec alignment 中明确目标语义，再让一端测试 RED |
+| 测试 fixture 泄漏真实会话内容 | 只使用人工构造的最小 JSON，不保存 prompt、token、cookie、私有路径 |
+| CI 依赖一次性改动过大 | 先接入本地 `scripts/check.sh`，CI 可作为同一 change 的最后一步 |
+
 ## 7. 验收标准
 
 1. Swift/Rust 双端读取同一 fixture 目录。
 2. 任意一端改动 envelope 行为时，共享 fixture 测试能失败。
 3. `WIRE_VERSION` / `WireVersion.current`、max line bytes 等关键常量有测试保护。
 4. CI 对协议漂移有明确 gate。
-5. Beads `homie-54o` 更新为已验证状态后才可关闭。
+5. OpenSpec alignment 明确每个 fixture case 对应的 Swift/Rust 测试和证据路径。
+6. Beads `homie-54o` 更新为已验证状态后才可关闭。
 
 ## 8. Beads 追踪
 

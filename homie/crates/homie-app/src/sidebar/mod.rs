@@ -1,6 +1,7 @@
 //! Window-sidebar state, deterministic preview data, and GPUI rendering.
 
 mod fixture;
+mod picker_logic;
 mod state;
 mod view;
 

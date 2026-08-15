@@ -11,6 +11,7 @@ public enum Method {
     public static let sessionRemove = "session.remove"
     public static let sessionRename = "session.rename"
     public static let sessionResume = "session.resume"
+    public static let sessionCapabilities = "session.capabilities"
     public static let sessionSendText = "session.send_text"
     public static let sessionResize = "session.resize"
     public static let sessionSetOwner = "session.set_owner"
@@ -265,6 +266,53 @@ public struct SessionListResult: Codable, Sendable {
 public struct SessionIDParams: Codable, Sendable {
     public var sessionID: SessionID
     public init(sessionID: SessionID) { self.sessionID = sessionID }
+}
+
+public struct DriverCapabilities: Codable, Hashable, Sendable {
+    public var prompt: Bool
+    public var cancelTurn: Bool
+    public var steerMessage: Bool
+    public var respondPermission: Bool
+    public var modelDiscovery: Bool
+    public var nativeResumeCursor: Bool
+    public var rollback: Bool
+    public var fork: Bool
+    public var usageEvents: Bool
+    public var backgroundWork: Bool
+
+    public init(
+        prompt: Bool = false,
+        cancelTurn: Bool = false,
+        steerMessage: Bool = false,
+        respondPermission: Bool = false,
+        modelDiscovery: Bool = false,
+        nativeResumeCursor: Bool = false,
+        rollback: Bool = false,
+        fork: Bool = false,
+        usageEvents: Bool = false,
+        backgroundWork: Bool = false
+    ) {
+        self.prompt = prompt
+        self.cancelTurn = cancelTurn
+        self.steerMessage = steerMessage
+        self.respondPermission = respondPermission
+        self.modelDiscovery = modelDiscovery
+        self.nativeResumeCursor = nativeResumeCursor
+        self.rollback = rollback
+        self.fork = fork
+        self.usageEvents = usageEvents
+        self.backgroundWork = backgroundWork
+    }
+}
+
+public struct SessionCapabilitiesResult: Codable, Hashable, Sendable {
+    public var sessionID: SessionID
+    public var capabilities: DriverCapabilities
+
+    public init(sessionID: SessionID, capabilities: DriverCapabilities) {
+        self.sessionID = sessionID
+        self.capabilities = capabilities
+    }
 }
 
 /// One past conversation discovered on disk by scanning the agents' own

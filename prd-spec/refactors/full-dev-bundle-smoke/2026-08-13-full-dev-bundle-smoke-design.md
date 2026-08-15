@@ -46,7 +46,9 @@ Waku 的 dev flow 通过 `scripts/dev.ts` 调用统一 `scripts/bundle.sh debug`
 
 在 `homie/scripts/dev.sh` 增加 `--full`，或新增 `homie/scripts/dev-bundle.sh`。推荐 `dev.sh --full`，入口更统一。
 
-`--full` 行为：
+首阶段采用本机架构 debug bundle，不做 universal、不做 notary、不构建三平台 remote helper catalog。这样能先覆盖真实本机开发验证，避免把 P0 dev smoke 扩大成 release packaging 重写。
+
+`--full` 首阶段行为：
 
 1. 构建本机架构 debug 或 release：
    - `homie-app --bin homie`
@@ -61,7 +63,7 @@ Waku 的 dev flow 通过 `scripts/dev.ts` 调用统一 `scripts/bundle.sh debug`
    - `Contents/Resources/bin/homie-ssh-askpass`；
    - `Contents/Resources/bin/homie-mcp`；
    - `Contents/Resources/bin/manifests`；
-   - 可选 `Contents/Resources/sidecar`。
+   - 首阶段不复制 `sidecar`，除非 OpenSpec 明确当前 dev smoke 需要浏览器能力。
 3. nested binaries 和 app 本体 ad-hoc codesign。
 4. 输出稳定路径，例如：
    - `homie/dist/homie-dev-<sha>-<arch>.app`
@@ -84,12 +86,23 @@ Waku 的 dev flow 通过 `scripts/dev.ts` 调用统一 `scripts/bundle.sh debug`
    - `HOMIE_SOCKET=<tmp>/daemon.sock <app>/Contents/Resources/bin/homie doctor`
 7. 关闭临时 Engine。
 8. 确认不触碰真实 `~/Library/Application Support/Homie`。
+9. 扫描 smoke log，确认没有连接或写入真实 daemon socket。
 
 ### 3.3 与 release package 的关系
 
 `--full` 不复制 release 的 universal/notary/DMG/remote helper 全部逻辑。它只覆盖本机开发验证所需的核心 runtime bundle。release 仍由 `package.sh` 负责。
 
-若后续发现 bundle 装配逻辑重复过多，可将共同逻辑抽出为 `scripts/lib/bundle-layout.sh`。
+若后续发现 bundle 装配逻辑重复过多，可将共同逻辑抽出为 `scripts/lib/bundle-layout.sh`。但首阶段不得先引入大型脚本框架或发布编排器；只能抽取 package/dev smoke 共同需要的二进制存在性、manifest 数量、codesign、临时 Engine smoke 检查。
+
+### 3.4 首阶段关闭口径
+
+`homie-ceg` 首阶段只关闭“full dev bundle 可真实启动随包 Engine 并由随包 CLI 连通”：
+
+- 本机架构即可，不要求 universal。
+- 只覆盖 app、Engine、holder、askpass、MCP、Swift CLI、manifest catalog。
+- remote helper 三平台 catalog、notary、DMG、update zip 仍由 release package 负责。
+- smoke 必须使用临时 `HOMIE_APP_SUPPORT` / socket，不读取或写入真实用户状态。
+- 实现前必须补齐 OpenSpec plan/tasks/alignment，并把 smoke 证据写入 `docs/verification/full-dev-bundle-smoke/`。
 
 ## 4. 实施步骤
 
@@ -106,8 +119,8 @@ Waku 的 dev flow 通过 `scripts/dev.ts` 调用统一 `scripts/bundle.sh debug`
    - full dev bundle；
    - full dev bundle smoke。
 6. CI 增加轻量检查：
-   - 可以先只在 macOS job 上跑 `dev.sh --full --no-launch --smoke`；
-   - 或仅执行 smoke 脚本针对 package job 的 app。
+   - 首阶段优先本地验证；CI 接入应放在 full dev smoke 稳定后；
+   - 若接入 CI，先在 macOS job 上跑 `dev.sh --full --no-launch --smoke`，并记录超时/工具前置条件。
 
 ## 5. 涉及文件
 
@@ -153,13 +166,24 @@ HOMIE_DIST_DIR=/private/tmp/homie-dist ./homie/scripts/package.sh
 homie/scripts/smoke-dev-bundle.sh /private/tmp/homie-dist/homie.app
 ```
 
+### 6.4 风险控制
+
+| 风险 | 控制 |
+|------|------|
+| dev smoke 变成第二套 release package | 首阶段只构建本机架构，不做 universal/notary/DMG/update zip |
+| smoke 污染真实用户状态 | 强制临时 `HOMIE_APP_SUPPORT`、临时 socket，验证真实 app support 目录无写入 |
+| 与 `package-release-phases` 重复 | smoke 检查项与后续 package verify 对齐；共用检查函数可后置 |
+| CI 不稳定拖慢开发 | 先记录本地 evidence；CI 接入作为稳定后任务 |
+| 自动 launch 接管真实 daemon | `--full --smoke` 默认不 launch UI，不继承 `HOMIE_SOCKET` |
+
 ## 7. 验收标准
 
 1. 用户可以用一个命令生成可真实验证的本机 Homie `.app`。
 2. full dev bundle 包含 Engine、holder、askpass、CLI、MCP、manifests。
 3. smoke 不使用真实 Application Support，不污染已有会话。
 4. 现有快速 dev 路径不被破坏。
-5. Beads `homie-ceg` 更新为已验证状态后才可关闭。
+5. OpenSpec alignment 明确 full dev bundle 与 release package 的边界，避免重复发布逻辑。
+6. Beads `homie-ceg` 更新为已验证状态后才可关闭。
 
 ## 8. Beads 追踪
 

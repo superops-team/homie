@@ -23,6 +23,7 @@ impl Method {
     pub const SESSION_REMOVE: &'static str = "session.remove";
     pub const SESSION_RENAME: &'static str = "session.rename";
     pub const SESSION_RESUME: &'static str = "session.resume";
+    pub const SESSION_CAPABILITIES: &'static str = "session.capabilities";
     pub const SESSION_SEND_TEXT: &'static str = "session.send_text";
     pub const SESSION_RESIZE: &'static str = "session.resize";
     pub const SESSION_READ_SCREEN: &'static str = "session.read_screen";
@@ -262,6 +263,29 @@ pub type SessionListParams = EmptyParams;
 pub type StateSnapshotResult = SessionListResult;
 pub type StateSnapshotParams = EmptyParams;
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriverCapabilities {
+    pub prompt: bool,
+    pub cancel_turn: bool,
+    pub steer_message: bool,
+    pub respond_permission: bool,
+    pub model_discovery: bool,
+    pub native_resume_cursor: bool,
+    pub rollback: bool,
+    pub fork: bool,
+    pub usage_events: bool,
+    pub background_work: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCapabilitiesResult {
+    #[serde(rename = "sessionID")]
+    pub session_id: SessionId,
+    pub capabilities: DriverCapabilities,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionIdParams {
@@ -273,6 +297,7 @@ pub struct SessionIdParams {
 pub use SessionIdParams as SessionIDParams;
 
 pub type SessionKillParams = SessionIdParams;
+pub type SessionCapabilitiesParams = SessionIdParams;
 pub type SessionRemoveParams = SessionIdParams;
 pub type SessionResumeParams = SessionIdParams;
 pub type SessionReadScreenParams = SessionIdParams;

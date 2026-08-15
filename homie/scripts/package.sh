@@ -26,6 +26,236 @@ universal_engine_binary="${universal_dir}/homied-rs"
 universal_holder_binary="${universal_dir}/homie-holder"
 universal_askpass_binary="${universal_dir}/homie-ssh-askpass"
 
+usage() {
+    cat <<'USAGE'
+Usage: scripts/package.sh [--phase PHASE] [--app APP_PATH]
+
+Build and verify the release homie.app bundle.
+
+Options:
+  --phase preflight  Check required tools and Rust targets before long builds.
+  --phase verify     Verify an existing app bundle without modifying it.
+  --app APP_PATH     App bundle to verify with --phase verify.
+  -h, --help         Show this help.
+
+With no arguments, scripts/package.sh runs the complete existing package flow.
+USAGE
+}
+
+phase="package"
+verify_app_path=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --phase)
+            if [[ $# -lt 2 ]]; then
+                echo "error: --phase requires a value" >&2
+                usage >&2
+                exit 2
+            fi
+            phase="$2"
+            shift 2
+            ;;
+        --phase=*)
+            phase="${1#*=}"
+            shift
+            ;;
+        --app)
+            if [[ $# -lt 2 ]]; then
+                echo "error: --app requires a path" >&2
+                usage >&2
+                exit 2
+            fi
+            verify_app_path="$2"
+            shift 2
+            ;;
+        --app=*)
+            verify_app_path="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "error: unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+case "${phase}" in
+    package|preflight|verify) ;;
+    *)
+        echo "error: unsupported phase: ${phase}" >&2
+        usage >&2
+        exit 2
+        ;;
+esac
+
+if [[ -n "${verify_app_path}" && "${phase}" != "verify" ]]; then
+    echo "error: --app is only valid with --phase verify" >&2
+    exit 2
+fi
+if [[ "${phase}" == "verify" && -z "${verify_app_path}" ]]; then
+    echo "error: --phase verify requires --app <path>" >&2
+    exit 2
+fi
+
+fail_check() {
+    local message="$1"
+    echo "error: ${message}" >&2
+    return 1
+}
+
+is_release_bundle_path() {
+    local app="$1"
+    [[ "$(basename "${app}")" == "homie.app" || -d "${app}/Contents/Resources/licenses" ]]
+}
+
+verify_app() {
+    local app="$1"
+    local failures=0
+    local contents="${app}/Contents"
+    local resources="${contents}/Resources"
+    local bin_dir="${resources}/bin"
+
+    add_failure() {
+        echo "error: $1" >&2
+        failures=$((failures + 1))
+    }
+    require_file() {
+        [[ -f "$1" ]] || add_failure "missing file: $1"
+    }
+    require_exec() {
+        [[ -x "$1" ]] || add_failure "missing executable: $1"
+    }
+
+    if [[ ! -d "${app}" ]]; then
+        fail_check "app bundle does not exist: ${app}"
+        return 1
+    fi
+
+    if command -v plutil >/dev/null 2>&1; then
+        plutil -lint "${contents}/Info.plist" >/dev/null || add_failure "invalid Info.plist: ${contents}/Info.plist"
+    else
+        add_failure "plutil is missing"
+    fi
+
+    require_exec "${contents}/MacOS/homie"
+    require_exec "${bin_dir}/homie"
+    require_exec "${bin_dir}/homie-mcp"
+    require_exec "${bin_dir}/homied-rs"
+    require_exec "${bin_dir}/homie-holder"
+    require_exec "${bin_dir}/homie-ssh-askpass"
+
+    local source_manifests bundled_manifests
+    source_manifests="$(find "${workspace_dir}/crates/homie-engine/manifests" -name '*.json' -type f | wc -l | tr -d ' ')"
+    if [[ -d "${bin_dir}/manifests" ]]; then
+        bundled_manifests="$(find "${bin_dir}/manifests" -name '*.json' -type f | wc -l | tr -d ' ')"
+    else
+        bundled_manifests=0
+    fi
+    if [[ ! -f "${bin_dir}/manifests/codex.json" || "${bundled_manifests}" != "${source_manifests}" || "${bundled_manifests}" -lt 20 ]]; then
+        add_failure "bundled Agent catalog is incomplete: ${bundled_manifests} manifest(s), ${source_manifests} in source"
+    fi
+
+    if is_release_bundle_path "${app}" || [[ -d "${bin_dir}/remote-helpers" ]]; then
+        require_file "${bin_dir}/remote-helpers/manifest.json"
+        local helper_count=0
+        if [[ -d "${bin_dir}/remote-helpers/artifacts" ]]; then
+            helper_count="$(find "${bin_dir}/remote-helpers/artifacts" -name homie-remote -type f | wc -l | tr -d ' ')"
+        fi
+        if [[ "${helper_count}" != "3" ]]; then
+            add_failure "expected 3 remote helper artifacts, found ${helper_count}"
+        fi
+    else
+        echo "==> Skipping remote helper catalog check for non-release app bundle"
+    fi
+
+    if is_release_bundle_path "${app}"; then
+        for binary in homied-rs homie-holder homie-ssh-askpass; do
+            if [[ -x "${bin_dir}/${binary}" ]]; then
+                lipo "${bin_dir}/${binary}" -verify_arch arm64 x86_64 >/dev/null \
+                    || add_failure "${binary} is not universal arm64/x86_64"
+            fi
+        done
+    fi
+
+    codesign --verify --deep --strict "${app}" >/dev/null || add_failure "codesign verification failed: ${app}"
+
+    if [[ "${failures}" -gt 0 ]]; then
+        return 1
+    fi
+    echo "Verified ${app}"
+}
+
+run_preflight() {
+    local failures=0
+
+    require_command() {
+        if ! command -v "$1" >/dev/null 2>&1; then
+            echo "error: missing required tool: $1" >&2
+            failures=$((failures + 1))
+        fi
+    }
+    require_target() {
+        local installed="$1"
+        local target="$2"
+        if ! grep -qx "${target}" <<<"${installed}"; then
+            echo "error: missing Rust target: ${target}" >&2
+            failures=$((failures + 1))
+        fi
+    }
+
+    require_command cargo
+    require_command rustup
+    require_command cargo-packager
+    require_command swift
+    require_command lipo
+    require_command codesign
+    require_command plutil
+    require_command python3
+
+    local installed_targets=""
+    if command -v rustup >/dev/null 2>&1; then
+        installed_targets="$(rustup target list --installed 2>/dev/null || true)"
+        require_target "${installed_targets}" aarch64-apple-darwin
+        require_target "${installed_targets}" x86_64-apple-darwin
+        require_target "${installed_targets}" x86_64-unknown-linux-musl
+        require_target "${installed_targets}" aarch64-unknown-linux-musl
+    fi
+
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        require_command cargo-zigbuild
+    fi
+    if [[ "${HOMIE_CREATE_DMG:-0}" == "1" ]]; then
+        require_command hdiutil
+    fi
+    if [[ -n "${APPLE_NOTARIZATION_KEYCHAIN_PROFILE:-${APPLE_KEYCHAIN_PROFILE:-${NOTARY_PROFILE:-}}}" \
+        || -n "${APPLE_NOTARIZATION_APPLE_ID:-${APPLE_ID:-}}" \
+        || -n "${APPLE_NOTARIZATION_PASSWORD:-${APPLE_PASSWORD:-}}" \
+        || -n "${APPLE_NOTARIZATION_TEAM_ID:-${APPLE_TEAM_ID:-}}" ]]; then
+        require_command xcrun
+    fi
+
+    if [[ "${CARGO_TARGET_DIR:-}" == "/tmp/homie-shared-target" ]]; then
+        echo "error: CARGO_TARGET_DIR must not point at /tmp/homie-shared-target" >&2
+        failures=$((failures + 1))
+    fi
+
+    if [[ "${failures}" -gt 0 ]]; then
+        return 1
+    fi
+    echo "Preflight passed"
+}
+
+if [[ "${phase}" == "verify" ]]; then
+    verify_app "${verify_app_path}"
+    exit $?
+fi
+
 # Toolchain location. The migration-era toolchain lived in /tmp, which macOS
 # sweeps -- a reboot deleted it mid-project and releases could not be built at
 # all until it was reinstalled. Prefer the persistent home install and fall back
@@ -46,9 +276,9 @@ export CARGO_TARGET_DIR="${target_dir}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.0}"
 export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-${target_dir}/clang-module-cache}"
 
-if ! command -v cargo-packager >/dev/null 2>&1; then
-    echo "error: cargo-packager is missing; install it with 'cargo install cargo-packager --locked'" >&2
-    exit 1
+run_preflight
+if [[ "${phase}" == "preflight" ]]; then
+    exit 0
 fi
 
 cd "${workspace_dir}"

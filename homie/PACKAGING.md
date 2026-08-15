@@ -33,6 +33,24 @@ scripts/install-local.sh
 
 With no signing environment, `package.sh` applies an ad-hoc hardened-runtime signature and verifies it. Set `HOMIE_CREATE_DMG=1` to also create `dist/homie-<version>-universal.dmg`. `HOMIE_DIST_DIR` changes the output directory, and `HOMIE_VERSION` changes the DMG filename.
 
+## Package phases
+
+Run preflight before a long package build when validating a machine:
+
+```sh
+scripts/package.sh --phase preflight
+```
+
+Run read-only bundle verification against an existing app:
+
+```sh
+scripts/package.sh --phase verify --app dist/homie.app
+```
+
+`verify` checks the app plist, bundled binaries, agent manifests, remote helper
+catalog for release bundles, and code signature. It does not sign, copy, delete,
+notarize, rebuild, or mutate the app.
+
 The committed `assets/icon.icns` is deterministic and can be regenerated on macOS with:
 
 ```sh

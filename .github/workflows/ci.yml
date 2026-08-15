@@ -226,18 +226,7 @@ jobs:
       - name: Verify bundle structure and signature
         run: |
           app="${RUNNER_TEMP}/homie-dist/homie.app"
-          plutil -lint "${app}/Contents/Info.plist"
-          test -x "${app}/Contents/Resources/bin/homie"
-          test -x "${app}/Contents/Resources/bin/homied-rs"
-          test -x "${app}/Contents/Resources/bin/homie-holder"
-          test -x "${app}/Contents/Resources/bin/homie-ssh-askpass"
-          test -f "${app}/Contents/Resources/bin/manifests/codex.json"
-          lipo "${app}/Contents/Resources/bin/homied-rs" -verify_arch arm64 x86_64
-          lipo "${app}/Contents/Resources/bin/homie-holder" -verify_arch arm64 x86_64
-          lipo "${app}/Contents/Resources/bin/homie-ssh-askpass" -verify_arch arm64 x86_64
-          test -f "${app}/Contents/Resources/bin/remote-helpers/manifest.json"
-          test "$(find "${app}/Contents/Resources/bin/remote-helpers/artifacts" -name homie-remote -type f | wc -l | tr -d ' ')" = 3
-          codesign --verify --deep --strict "${app}"
+          homie/scripts/package.sh --phase verify --app "${app}"
 
   browser-sidecar:
     name: Browser sidecar integration

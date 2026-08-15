@@ -1,0 +1,68 @@
+[
+  {
+    "name": "request-with-params",
+    "kind": "request",
+    "wire": {"id": 1, "method": "hello", "params": {"build": "fixture-client", "proto": 1}},
+    "canonical": {"id": 1, "method": "hello", "params": {"build": "fixture-client", "proto": 1}}
+  },
+  {
+    "name": "request-without-params",
+    "kind": "request",
+    "wire": {"id": 2, "method": "session.list"},
+    "canonical": {"id": 2, "method": "session.list"}
+  },
+  {
+    "name": "request-null-params-canonical-omits",
+    "kind": "request",
+    "wire": {"id": 3, "method": "agent.readiness", "params": null},
+    "canonical": {"id": 3, "method": "agent.readiness"}
+  },
+  {
+    "name": "event-with-params",
+    "kind": "event",
+    "wire": {"event": "session.removed", "params": {"id": "s_fixture"}, "seq": 4},
+    "canonical": {"event": "session.removed", "params": {"id": "s_fixture"}, "seq": 4}
+  },
+  {
+    "name": "event-without-params-canonical-null",
+    "kind": "event",
+    "wire": {"event": "project.updated", "seq": 5},
+    "canonical": {"event": "project.updated", "params": null, "seq": 5}
+  },
+  {
+    "name": "response-ok-object",
+    "kind": "response",
+    "wire": {"id": 6, "ok": {"proto": 1, "build": "fixture-engine", "pid": 42}},
+    "canonical": {"id": 6, "ok": {"proto": 1, "build": "fixture-engine", "pid": 42}}
+  },
+  {
+    "name": "response-ok-null",
+    "kind": "response",
+    "wire": {"id": 7, "ok": null},
+    "canonical": {"id": 7, "ok": null}
+  },
+  {
+    "name": "response-ok-absent-canonical-null",
+    "kind": "response",
+    "wire": {"id": 8},
+    "canonical": {"id": 8, "ok": null}
+  },
+  {
+    "name": "response-error",
+    "kind": "response",
+    "wire": {"id": 9, "err": {"code": "bad_request", "message": "fixture error"}},
+    "canonical": {"id": 9, "err": {"code": "bad_request", "message": "fixture error"}}
+  },
+  {
+    "name": "method-wins-over-event",
+    "kind": "request",
+    "wire": {"id": 10, "method": "hello", "event": "session.updated", "seq": 99},
+    "canonical": {"id": 10, "method": "hello"}
+  },
+  {
+    "name": "event-wins-over-error",
+    "kind": "event",
+    "wire": {"id": 11, "event": "session.updated", "seq": 12, "err": {"code": "bad_request", "message": "ignored"}},
+    "canonical": {"event": "session.updated", "params": null, "seq": 12}
+  }
+]

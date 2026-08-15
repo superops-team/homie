@@ -4,6 +4,41 @@ import Testing
 
 @testable import HomieProtocol
 
+private struct SharedRoundTripFixture: Decodable {
+    var name: String
+    var kind: String
+    var wire: JSONValue
+    var canonical: JSONValue
+}
+
+private struct SharedInvalidFixture: Decodable {
+    var name: String
+    var wire: JSONValue
+}
+
+@Test func sharedControlFixtureRoundTripsToCanonicalJSON() throws {
+    #expect(WireVersion.current == 1)
+    #expect(NDJSONBuffer.maxLineBytes == 4 * 1024 * 1024)
+
+    for fixture in try sharedRoundTripFixtures() {
+        let wire = try JSONEncoder.homie.encode(fixture.wire)
+        let message = try JSONDecoder.homie.decode(ControlMessage.self, from: wire)
+        #expect(controlMessageKind(message) == fixture.kind, "\(fixture.name)")
+        let canonicalData = try JSONEncoder.homie.encode(message)
+        let canonical = try JSONDecoder.homie.decode(JSONValue.self, from: canonicalData)
+        #expect(canonical == fixture.canonical, "\(fixture.name)")
+    }
+}
+
+@Test func sharedControlFixtureInvalidCasesFailToDecode() throws {
+    for fixture in try sharedInvalidFixtures() {
+        let wire = try JSONEncoder.homie.encode(fixture.wire)
+        #expect(throws: Error.self, "\(fixture.name)") {
+            _ = try JSONDecoder.homie.decode(ControlMessage.self, from: wire)
+        }
+    }
+}
+
 @Test func controlMessageRoundTrip() throws {
     let params = try JSONValue(encoding: SessionSpawnParams(kind: .claudeCode, cwd: "/tmp/x"))
     let request = ControlMessage.request(id: 7, method: Method.sessionSpawn, params: params)
@@ -135,4 +170,62 @@ import Testing
     #expect(roundTrippedResult.repoRoot == "/srv/app")
     #expect(roundTrippedResult.baseRef == "origin/main")
     #expect(!roundTrippedResult.truncated)
+}
+
+@Test func sessionCapabilitiesWireShape() throws {
+    #expect(Method.sessionCapabilities == "session.capabilities")
+
+    let defaults = DriverCapabilities()
+    #expect(defaults.prompt == false)
+    #expect(defaults.cancelTurn == false)
+    #expect(defaults.steerMessage == false)
+    #expect(defaults.modelDiscovery == false)
+    #expect(defaults.nativeResumeCursor == false)
+
+    let capabilities = DriverCapabilities(
+        prompt: true,
+        cancelTurn: true,
+        steerMessage: true,
+        modelDiscovery: true,
+        nativeResumeCursor: true
+    )
+    let encoded = try JSONValue(encoding: capabilities)
+    #expect(encoded["cancelTurn"] == .bool(true))
+    #expect(encoded["steerMessage"] == .bool(true))
+    #expect(encoded["respondPermission"] == .bool(false))
+    #expect(encoded["usageEvents"] == .bool(false))
+
+    let result = SessionCapabilitiesResult(
+        sessionID: SessionID(rawValue: "s_cap"),
+        capabilities: capabilities
+    )
+    let roundTripped: SessionCapabilitiesResult = try JSONValue(encoding: result).decoded()
+    #expect(roundTripped.sessionID.rawValue == "s_cap")
+    #expect(roundTripped.capabilities.nativeResumeCursor)
+}
+
+private func sharedFixtureDirectory() -> URL {
+    URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("protocol-fixtures/control-message", isDirectory: true)
+}
+
+private func sharedRoundTripFixtures() throws -> [SharedRoundTripFixture] {
+    let data = try Data(contentsOf: sharedFixtureDirectory().appendingPathComponent("roundtrip-cases.json"))
+    return try JSONDecoder.homie.decode([SharedRoundTripFixture].self, from: data)
+}
+
+private func sharedInvalidFixtures() throws -> [SharedInvalidFixture] {
+    let data = try Data(contentsOf: sharedFixtureDirectory().appendingPathComponent("invalid-cases.json"))
+    return try JSONDecoder.homie.decode([SharedInvalidFixture].self, from: data)
+}
+
+private func controlMessageKind(_ message: ControlMessage) -> String {
+    switch message {
+    case .request: return "request"
+    case .response: return "response"
+    case .event: return "event"
+    }
 }

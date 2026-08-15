@@ -35,6 +35,241 @@ impl PersistedState {
     }
 }
 
+pub trait PersistenceStore {
+    fn load_projects(&self) -> std::io::Result<Vec<serde_json::Value>>;
+    fn load_sessions(&self) -> std::io::Result<Vec<SessionRecord>>;
+    fn save_project(&self, project: serde_json::Value) -> std::io::Result<()>;
+    fn save_session(&self, session: &SessionRecord) -> std::io::Result<()>;
+    fn delete_session(&self, session_id: &str) -> std::io::Result<()>;
+    fn flush(&self) -> std::io::Result<()>;
+}
+
+#[derive(Clone, Debug)]
+pub struct JsonEnvelopeStore {
+    state_file: PathBuf,
+}
+
+impl JsonEnvelopeStore {
+    pub fn new(state_file: impl Into<PathBuf>) -> Self {
+        Self {
+            state_file: state_file.into(),
+        }
+    }
+
+    fn load_state(&self) -> std::io::Result<PersistedState> {
+        let bytes = match std::fs::read(&self.state_file) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(PersistedState::current(Vec::new(), Vec::new()));
+            }
+            Err(error) => return Err(error),
+        };
+        serde_json::from_slice(&bytes).map_err(invalid_data)
+    }
+
+    fn write_state(&self, state: &PersistedState) -> std::io::Result<()> {
+        write_json_atomic(&self.state_file, state)
+    }
+}
+
+impl PersistenceStore for JsonEnvelopeStore {
+    fn load_projects(&self) -> std::io::Result<Vec<serde_json::Value>> {
+        Ok(self.load_state()?.projects)
+    }
+
+    fn load_sessions(&self) -> std::io::Result<Vec<SessionRecord>> {
+        Ok(self.load_state()?.sessions)
+    }
+
+    fn save_project(&self, project: serde_json::Value) -> std::io::Result<()> {
+        let mut state = self.load_state()?;
+        let id = project.get("id").and_then(serde_json::Value::as_str);
+        if let Some(id) = id {
+            if let Some(existing) = state.projects.iter_mut().find(|candidate| {
+                candidate.get("id").and_then(serde_json::Value::as_str) == Some(id)
+            }) {
+                *existing = project;
+                return self.write_state(&state);
+            }
+        }
+        state.projects.push(project);
+        self.write_state(&state)
+    }
+
+    fn save_session(&self, session: &SessionRecord) -> std::io::Result<()> {
+        let mut state = self.load_state()?;
+        if let Some(existing) = state
+            .sessions
+            .iter_mut()
+            .find(|candidate| candidate.id == session.id)
+        {
+            *existing = session.clone();
+        } else {
+            state.sessions.push(session.clone());
+        }
+        self.write_state(&state)
+    }
+
+    fn delete_session(&self, session_id: &str) -> std::io::Result<()> {
+        let mut state = self.load_state()?;
+        state.sessions.retain(|session| session.id.0 != session_id);
+        self.write_state(&state)
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SplitJsonStore {
+    root: PathBuf,
+}
+
+impl SplitJsonStore {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    fn projects_file(&self) -> PathBuf {
+        self.root.join("projects.json")
+    }
+
+    fn sessions_dir(&self) -> PathBuf {
+        self.root.join("sessions")
+    }
+
+    fn session_file(&self, session_id: &str) -> PathBuf {
+        self.sessions_dir().join(format!("{session_id}.json"))
+    }
+}
+
+impl PersistenceStore for SplitJsonStore {
+    fn load_projects(&self) -> std::io::Result<Vec<serde_json::Value>> {
+        let path = self.projects_file();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        serde_json::from_slice(&bytes).map_err(invalid_data)
+    }
+
+    fn load_sessions(&self) -> std::io::Result<Vec<SessionRecord>> {
+        let dir = self.sessions_dir();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let mut sessions = Vec::new();
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let bytes = std::fs::read(&path)?;
+            match serde_json::from_slice::<SessionRecord>(&bytes) {
+                Ok(session) => sessions.push(session),
+                Err(_) => {
+                    let quarantine = path.with_extension("json.corrupt");
+                    let _ = std::fs::rename(&path, quarantine);
+                }
+            }
+        }
+        sessions.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+        Ok(sessions)
+    }
+
+    fn save_project(&self, project: serde_json::Value) -> std::io::Result<()> {
+        let mut projects = self.load_projects()?;
+        let id = project.get("id").and_then(serde_json::Value::as_str);
+        if let Some(id) = id {
+            if let Some(existing) = projects.iter_mut().find(|candidate| {
+                candidate.get("id").and_then(serde_json::Value::as_str) == Some(id)
+            }) {
+                *existing = project;
+                return write_json_atomic(&self.projects_file(), &projects);
+            }
+        }
+        projects.push(project);
+        write_json_atomic(&self.projects_file(), &projects)
+    }
+
+    fn save_session(&self, session: &SessionRecord) -> std::io::Result<()> {
+        write_json_atomic(&self.session_file(&session.id.0), session)
+    }
+
+    fn delete_session(&self, session_id: &str) -> std::io::Result<()> {
+        match std::fs::remove_file(self.session_file(session_id)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SplitMigrationReport {
+    pub dry_run: bool,
+    pub project_count: usize,
+    pub session_count: usize,
+    pub backup_path: Option<PathBuf>,
+    pub split_root: PathBuf,
+}
+
+pub fn migrate_envelope_to_split(
+    state_file: impl AsRef<Path>,
+    split_root: impl AsRef<Path>,
+    dry_run: bool,
+) -> std::io::Result<SplitMigrationReport> {
+    let state_file = state_file.as_ref();
+    let split_root = split_root.as_ref();
+    let envelope = JsonEnvelopeStore::new(state_file);
+    let state = envelope.load_state()?;
+    let report = SplitMigrationReport {
+        dry_run,
+        project_count: state.projects.len(),
+        session_count: state.sessions.len(),
+        backup_path: (!dry_run).then(|| state_file.with_extension("json.backup")),
+        split_root: split_root.to_path_buf(),
+    };
+    if dry_run {
+        return Ok(report);
+    }
+
+    let backup_path = report.backup_path.as_ref().expect("backup path");
+    if let Some(parent) = backup_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(state_file, backup_path)?;
+    let split = SplitJsonStore::new(split_root);
+    write_json_atomic(&split.projects_file(), &state.projects)?;
+    std::fs::create_dir_all(split.sessions_dir())?;
+    for session in &state.sessions {
+        split.save_session(session)?;
+    }
+    Ok(report)
+}
+
+fn write_json_atomic(path: &Path, value: &impl Serialize) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec(value).map_err(invalid_data)?;
+    let temp = path.with_extension("json.tmp");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&temp, bytes)?;
+    std::fs::rename(&temp, path)
+}
+
+fn invalid_data(error: impl std::error::Error) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+}
+
 pub struct Registry {
     engine: Arc<ManifestEngine>,
     sessions: HashMap<String, Session>,
@@ -1049,6 +1284,86 @@ mod tests {
         let mut reloaded = Registry::new(engine(), &state_file);
         assert_eq!(reloaded.load().expect("load"), 1);
         assert_eq!(reloaded.records()[0].id.0, "s_1");
+    }
+
+    #[test]
+    fn split_store_dry_run_migration_writes_nothing() {
+        let temp = tempfile::tempdir().expect("temp");
+        let state_file = temp.path().join("state.json");
+        let split_root = temp.path().join("split");
+        let state = PersistedState::current(
+            vec![record("s_1"), record("s_2")],
+            vec![serde_json::json!({"id": "p", "root": "/tmp", "name": "tmp"})],
+        );
+        std::fs::write(&state_file, serde_json::to_vec(&state).expect("encode")).expect("write");
+
+        let report =
+            migrate_envelope_to_split(&state_file, &split_root, true).expect("dry-run migration");
+        assert!(report.dry_run);
+        assert_eq!(report.project_count, 1);
+        assert_eq!(report.session_count, 2);
+        assert_eq!(report.backup_path, None);
+        assert!(!split_root.join("projects.json").exists());
+        assert!(!split_root.join("sessions").exists());
+        assert!(state_file.exists());
+    }
+
+    #[test]
+    fn split_store_migration_preserves_backup_and_loads_records() {
+        let temp = tempfile::tempdir().expect("temp");
+        let state_file = temp.path().join("state.json");
+        let split_root = temp.path().join("split");
+        let mut first = record("s_1");
+        first.title = "first".into();
+        let mut second = record("s_2");
+        second.title = "second".into();
+        let state = PersistedState::current(
+            vec![first, second],
+            vec![serde_json::json!({"id": "p", "root": "/tmp", "name": "tmp"})],
+        );
+        std::fs::write(&state_file, serde_json::to_vec(&state).expect("encode")).expect("write");
+
+        let report =
+            migrate_envelope_to_split(&state_file, &split_root, false).expect("apply migration");
+        assert!(!report.dry_run);
+        assert_eq!(report.project_count, 1);
+        assert_eq!(report.session_count, 2);
+        assert!(
+            report
+                .backup_path
+                .as_ref()
+                .is_some_and(|path| path.exists())
+        );
+        assert!(state_file.exists(), "source envelope remains in place");
+
+        let split = SplitJsonStore::new(&split_root);
+        assert_eq!(split.load_projects().expect("projects").len(), 1);
+        let sessions = split.load_sessions().expect("sessions");
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].id.0, "s_1");
+        assert_eq!(sessions[1].id.0, "s_2");
+    }
+
+    #[test]
+    fn split_store_quarantines_one_corrupt_session_file() {
+        let temp = tempfile::tempdir().expect("temp");
+        let split = SplitJsonStore::new(temp.path());
+        split.save_session(&record("s_1")).expect("save s_1");
+        split.save_session(&record("s_2")).expect("save s_2");
+        let bad = temp.path().join("sessions").join("s_bad.json");
+        std::fs::write(&bad, b"{ not json").expect("write bad");
+
+        let sessions = split.load_sessions().expect("load sessions");
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().any(|session| session.id.0 == "s_1"));
+        assert!(sessions.iter().any(|session| session.id.0 == "s_2"));
+        assert!(!bad.exists());
+        assert!(
+            temp.path()
+                .join("sessions")
+                .join("s_bad.json.corrupt")
+                .exists()
+        );
     }
 
     #[test]

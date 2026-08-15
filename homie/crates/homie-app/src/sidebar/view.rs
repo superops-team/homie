@@ -30,6 +30,9 @@ use crate::store::{
 use crate::updates::{UpdateCommand, UpdatePhase, UpdateState};
 use crate::usage::{UsageFormat, UsageSnapshot};
 
+use super::picker_logic::{
+    agent_picker_shortcut, remote_picker_target, should_resolve_active_repo,
+};
 use super::{
     DragItem, Popover, PreviewScenario, SidebarPreviewFixture, SidebarUiState, move_before,
     move_to_end,
@@ -3618,34 +3621,6 @@ fn directory_row(
         .into_any_element()
 }
 
-fn remote_picker_target(explicit_directory: Option<&str>, host_default: Option<&str>) -> String {
-    explicit_directory
-        .or(host_default)
-        .map(normalize_remote_picker_path)
-        .unwrap_or_else(|| "~".to_owned())
-}
-
-fn normalize_remote_picker_path(path: &str) -> String {
-    let path = path.trim();
-    if path.is_empty() {
-        return "~".to_owned();
-    }
-    let without_trailing_slashes = path.trim_end_matches('/');
-    if without_trailing_slashes.is_empty() {
-        "/".to_owned()
-    } else {
-        without_trailing_slashes.to_owned()
-    }
-}
-
-fn should_resolve_active_repo(
-    explicit_directory: Option<&str>,
-    target_host: Option<&str>,
-    active_host: Option<&str>,
-) -> bool {
-    explicit_directory.is_none() && target_host.is_none() && active_host.is_some()
-}
-
 fn menu_divider(colors: SemanticColors) -> AnyElement {
     div()
         .my(px(3.0))
@@ -3818,18 +3793,6 @@ fn agent_picker_options(
     // Terminal is last on purpose: it is the escape hatch, not an agent.
     options.push(("Terminal".to_owned(), ProtoAgentKind::SHELL, "⌥⌘T"));
     options
-}
-
-fn agent_picker_shortcut(
-    kind: &ProtoAgentKind,
-    default_kind: &ProtoAgentKind,
-    fallback: &'static str,
-) -> &'static str {
-    if kind == default_kind {
-        "⌘T"
-    } else {
-        fallback
-    }
 }
 
 fn ui_agent_kind(kind: &ProtoAgentKind) -> AgentKind {

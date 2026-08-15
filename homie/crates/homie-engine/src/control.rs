@@ -565,6 +565,7 @@ impl ControlServer {
             Method::HELLO => self.hello(params),
             Method::SESSION_SPAWN => self.session_spawn(params),
             Method::SESSION_LIST | Method::STATE_SNAPSHOT => self.session_list(),
+            Method::SESSION_CAPABILITIES => self.session_capabilities(params),
             Method::SESSION_SEND_TEXT => self.session_send_text(params),
             Method::SESSION_RESIZE => self.session_resize(params),
             Method::SESSION_READ_SCREEN => self.session_read_screen(params),
@@ -628,6 +629,20 @@ impl ControlServer {
             "pid": std::process::id() as i32,
             "executableHash": process_executable_hash(),
         }))
+    }
+
+    fn session_capabilities(&self, params: Option<JsonValue>) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionCapabilitiesParams = decode(params)?;
+        let registry = self.registry.lock().map_err(poisoned)?;
+        let record = registry
+            .record(&p.session_id.0)
+            .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?;
+        let capabilities =
+            crate::driver::capabilities_for_manifest_id(record.effective_kind().id());
+        encode(&homie_proto::SessionCapabilitiesResult {
+            session_id: p.session_id,
+            capabilities,
+        })
     }
 
     /// Starts an agent and begins watching it.
@@ -3057,6 +3072,64 @@ mod tests {
             Some(json!({ "proto": 99, "build": "future-client" })),
         ));
         assert_eq!(error.code, "version_mismatch");
+    }
+
+    #[test]
+    fn session_capabilities_are_read_only_and_default_to_unsupported() {
+        let temp = tempfile::tempdir().expect("temp");
+        let server = server(temp.path());
+
+        let missing = err_of(call(
+            &server,
+            homie_proto::Method::SESSION_CAPABILITIES,
+            Some(json!({ "sessionID": "s_missing" })),
+        ));
+        assert_eq!(missing.code, "not_found");
+
+        {
+            let mut registry = server.registry.lock().expect("registry");
+            registry.insert_record(test_record("s_shell"));
+            let mut fake = test_record("s_fake");
+            fake.kind = homie_proto::AgentKind::new(crate::driver::FAKE_DRIVER_ID);
+            registry.insert_record(fake);
+        }
+
+        let shell = ok_of(call(
+            &server,
+            homie_proto::Method::SESSION_CAPABILITIES,
+            Some(json!({ "sessionID": "s_shell" })),
+        ));
+        assert_eq!(shell["sessionID"], json!("s_shell"));
+        assert_eq!(
+            shell["capabilities"],
+            serde_json::to_value(homie_proto::DriverCapabilities::default()).unwrap()
+        );
+
+        let before = server
+            .registry
+            .lock()
+            .expect("registry")
+            .record("s_shell")
+            .expect("record");
+        assert_eq!(before.status, homie_proto::SessionStatus::Idle);
+
+        let fake = ok_of(call(
+            &server,
+            homie_proto::Method::SESSION_CAPABILITIES,
+            Some(json!({ "sessionID": "s_fake" })),
+        ));
+        assert_eq!(fake["capabilities"]["steerMessage"], json!(true));
+        assert_eq!(fake["capabilities"]["cancelTurn"], json!(true));
+        assert_eq!(fake["capabilities"]["modelDiscovery"], json!(true));
+        assert_eq!(fake["capabilities"]["nativeResumeCursor"], json!(true));
+
+        let after = server
+            .registry
+            .lock()
+            .expect("registry")
+            .record("s_shell")
+            .expect("record");
+        assert_eq!(after, before, "capability query must not mutate records");
     }
 
     #[test]

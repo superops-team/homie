@@ -25,6 +25,7 @@ pub mod checkpoint;
 pub mod control;
 pub mod detect;
 pub mod directories;
+pub mod driver;
 pub mod environment;
 pub mod events;
 pub mod git;

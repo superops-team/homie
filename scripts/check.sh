@@ -68,6 +68,10 @@ bash "${root}/scripts/check-agent-manifest-drift.sh"
 bash "${root}/homie/scripts/test-publish-github-release.sh"
 bash "${root}/homie/scripts/test-publish-homebrew-cask.sh"
 
+echo "==> Shared control protocol fixtures"
+cargo test --manifest-path "${root}/homie/Cargo.toml" -p homie-proto shared_control_fixture -- --nocapture
+swift test --package-path "${root}" --filter sharedControlFixture "${swift_test_flags[@]}"
+
 echo "==> Swift CLI/protocol support"
 swift test --package-path "${root}" --no-parallel "${swift_test_flags[@]}"
 

@@ -1,12 +1,13 @@
 use homie_proto::{
     AgentKind, AgentReadinessResult, AttachRequest, ClientRole, ControlMessage, DateMillis,
-    EventName, EventsSubscribeParams, ExitReason, HostInitializeParams, Method,
-    ReadScrollbackCellsResult, SessionDiffBase, SessionId, SessionListResult,
-    SessionReadDiffParams, SessionReadDiffResult, SessionStatus, StateSnapshotResult,
-    WorktreeListResult,
+    DriverCapabilities, EventName, EventsSubscribeParams, ExitReason, HostInitializeParams, Method,
+    ReadScrollbackCellsResult, SessionCapabilitiesResult, SessionDiffBase, SessionId,
+    SessionListResult, SessionReadDiffParams, SessionReadDiffResult, SessionStatus,
+    StateSnapshotResult, WorktreeListResult,
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+use std::path::PathBuf;
 
 const FIXTURES: &[&str] = &[
     include_str!("fixtures/hello_response.json"),
@@ -15,6 +16,51 @@ const FIXTURES: &[&str] = &[
     include_str!("fixtures/agent_readiness_response.json"),
     include_str!("fixtures/worktree_list_response.json"),
 ];
+
+#[derive(Debug, Deserialize)]
+struct SharedRoundTripFixture {
+    name: String,
+    kind: String,
+    wire: Value,
+    canonical: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct SharedInvalidFixture {
+    name: String,
+    wire: Value,
+}
+
+#[test]
+fn shared_control_fixture_round_trips_to_canonical_json() {
+    assert_eq!(homie_proto::WIRE_VERSION, 1);
+    assert_eq!(
+        homie_proto::control::MAX_CONTROL_LINE_BYTES,
+        4 * 1024 * 1024
+    );
+
+    for fixture in shared_roundtrip_fixtures() {
+        let message: ControlMessage = serde_json::from_value(fixture.wire.clone())
+            .unwrap_or_else(|error| panic!("{} must decode: {error}", fixture.name));
+        assert_eq!(control_message_kind(&message), fixture.kind);
+        let canonical = serde_json::to_value(&message)
+            .unwrap_or_else(|error| panic!("{} must encode: {error}", fixture.name));
+        assert_eq!(canonical, fixture.canonical, "{}", fixture.name);
+    }
+}
+
+#[test]
+fn shared_control_fixture_invalid_cases_fail_to_decode() {
+    for fixture in shared_invalid_fixtures() {
+        let decoded = serde_json::from_value::<ControlMessage>(fixture.wire.clone());
+        assert!(
+            decoded.is_err(),
+            "{} unexpectedly decoded as {:?}",
+            fixture.name,
+            decoded
+        );
+    }
+}
 
 #[test]
 fn live_control_fixtures_round_trip_semantically() {
@@ -182,6 +228,7 @@ fn method_name_set_is_complete() {
         Method::SESSION_REMOVE,
         Method::SESSION_RENAME,
         Method::SESSION_RESUME,
+        Method::SESSION_CAPABILITIES,
         Method::SESSION_SEND_TEXT,
         Method::SESSION_RESIZE,
         Method::SESSION_READ_SCREEN,
@@ -213,9 +260,60 @@ fn method_name_set_is_complete() {
         Method::DAEMON_SHUTDOWN_IF_IDLE,
         Method::DAEMON_SHUTDOWN,
     ];
-    assert_eq!(methods.len(), 37);
+    assert_eq!(methods.len(), 38);
     assert_eq!(methods[0], "hello");
     assert_eq!(methods.last().copied(), Some("daemon.shutdown"));
+}
+
+#[test]
+fn session_capabilities_wire_shape_is_camel_case_and_default_false() {
+    let capabilities = DriverCapabilities {
+        prompt: true,
+        cancel_turn: true,
+        steer_message: true,
+        model_discovery: true,
+        native_resume_cursor: true,
+        ..DriverCapabilities::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&capabilities).unwrap(),
+        json!({
+            "prompt": true,
+            "cancelTurn": true,
+            "steerMessage": true,
+            "respondPermission": false,
+            "modelDiscovery": true,
+            "nativeResumeCursor": true,
+            "rollback": false,
+            "fork": false,
+            "usageEvents": false,
+            "backgroundWork": false,
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(DriverCapabilities::default()).unwrap(),
+        json!({
+            "prompt": false,
+            "cancelTurn": false,
+            "steerMessage": false,
+            "respondPermission": false,
+            "modelDiscovery": false,
+            "nativeResumeCursor": false,
+            "rollback": false,
+            "fork": false,
+            "usageEvents": false,
+            "backgroundWork": false,
+        })
+    );
+    let result = SessionCapabilitiesResult {
+        session_id: SessionId::new("s_cap"),
+        capabilities,
+    };
+    assert_eq!(
+        serde_json::to_value(&result).unwrap()["sessionID"],
+        json!("s_cap")
+    );
+    typed_round_trip(&result);
 }
 
 #[test]
@@ -418,4 +516,35 @@ where
     let encoded = serde_json::to_vec(value).unwrap();
     let decoded: T = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(value, &decoded);
+}
+
+fn shared_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("protocol-fixtures/control-message")
+}
+
+fn shared_roundtrip_fixtures() -> Vec<SharedRoundTripFixture> {
+    let path = shared_fixture_dir().join("roundtrip-cases.json");
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("failed to decode {}: {error}", path.display()))
+}
+
+fn shared_invalid_fixtures() -> Vec<SharedInvalidFixture> {
+    let path = shared_fixture_dir().join("invalid-cases.json");
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("failed to decode {}: {error}", path.display()))
+}
+
+fn control_message_kind(message: &ControlMessage) -> String {
+    match message {
+        ControlMessage::Request { .. } => "request",
+        ControlMessage::Response { .. } => "response",
+        ControlMessage::Event { .. } => "event",
+    }
+    .to_owned()
 }

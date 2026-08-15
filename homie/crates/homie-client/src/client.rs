@@ -714,6 +714,17 @@ impl DaemonClient {
         self.no_params(Method::SESSION_REOPEN_LAST).await
     }
 
+    pub async fn session_capabilities(
+        &self,
+        session_id: SessionId,
+    ) -> Result<SessionCapabilitiesResult, ClientError> {
+        self.typed(
+            Method::SESSION_CAPABILITIES,
+            &SessionCapabilitiesParams { session_id },
+        )
+        .await
+    }
+
     pub async fn events_wait(
         &self,
         params: EventsWaitParams,

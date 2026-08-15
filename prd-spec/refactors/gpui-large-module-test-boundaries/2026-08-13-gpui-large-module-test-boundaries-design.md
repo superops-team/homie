@@ -104,7 +104,28 @@ homie/crates/homie-app/src/inspector/
 4. Root seam/window placement  
    原因：视觉状态容易和持久化互相影响。
 
-### 3.4 测试组织
+首阶段建议只选择一个行为单元，优先 `Sidebar new-agent picker`。不得在同一 change 中同时拆 sidebar、terminal、inspector 和 root。若实现时发现 picker 依赖过多，应先补 characterization tests 和窄 adapter，而不是扩大为整文件搬迁。
+
+### 3.4 与既有 GPUI 架构变更的关系
+
+本 PRD 不替代已经完成的 `gpui-architecture-hardening` 及其 child slices：
+
+- `gpui-render-path-purity` 已完成 sidebar shortcut rank first slice；本 PRD 首阶段不得重复改 shortcut rank。
+- `gpui-utility-surfaces-first-slice` 已完成 UtilitySurfaces task/generation 生命周期切片；本 PRD 不再修改该路径。
+- `gpui-ui-primitives-a11y` 已完成 Button primitive first slice；本 PRD 不新增 UI primitive。
+- `gpui-lifecycle-task-ownership` 已完成 RootView subscription/task 所有权 first slice；本 PRD 不重做 RootView lifecycle。
+
+### 3.5 首阶段关闭口径
+
+`homie-wgv` 首阶段只关闭一个高变更 UI 行为的纯逻辑提取：
+
+- 从 render 文件抽出一个无 `Window/Context/Entity` 依赖的逻辑模块。
+- 增加 focused unit tests，覆盖 existing behavior characterization。
+- 保持视觉结构、交互入口和 public API 不变。
+- OpenSpec alignment 明确不与已完成 GPUI child changes 重叠。
+- 若选择 Sidebar picker，必须覆盖 local/remote、agent readiness、cancel/no directory selected、spawn option 输出。
+
+### 3.6 测试组织
 
 新增或扩展测试模块：
 
@@ -144,6 +165,8 @@ homie/crates/homie-app/src/inspector/tests.rs
 - 首批拆分不改变 public API。
 - render 文件行数下降，但不以行数作为唯一指标。
 - 抽出的逻辑模块无 GPUI `Window/Context/Entity` 依赖。
+- `rg -n "Window|Context|Entity|cx\\.|div\\(" <new-logic-module>` 无命中，除非测试文件中有明确说明。
+- `git diff --name-only` 不包含不相关 GPUI child slice 已完成范围。
 
 ### 6.2 单元测试
 
@@ -158,13 +181,24 @@ homie/crates/homie-app/src/inspector/tests.rs
 - full dev bundle smoke。
 - 手动验证：创建 session、切换 session、resize、打开 inspector、执行 close/archive/reopen。
 
+### 6.4 风险控制
+
+| 风险 | 控制 |
+|------|------|
+| 借机大规模搬迁 GPUI 文件 | 每个 change 只抽一个行为单元，OpenSpec 列明禁止改动范围 |
+| 与已完成 child slices 重叠 | alignment 映射 `gpui-render-path-purity`、`gpui-utility-surfaces-first-slice` 等已完成范围 |
+| 抽出逻辑后视觉/交互回退 | 先 characterization tests，再抽模块，最后跑 preview/手动交互证据 |
+| 纯逻辑模块仍依赖 GPUI 上下文 | 静态检查禁止 `Window/Context/Entity/cx.` 进入逻辑模块 |
+| 只追求行数下降 | 验收以行为测试和 review 面缩小为准，行数仅作辅助观察 |
+
 ## 7. 验收标准
 
 1. 至少一个高变更 UI 行为被抽为纯逻辑模块。
 2. 该模块有 focused tests，无需 GPUI window。
 3. 原 UI 行为不变，现有 preview/fixture 通过。
 4. 后续同类拆分有明确模板。
-5. Beads `homie-wgv` 更新为已验证状态后才可关闭。
+5. OpenSpec alignment 明确首阶段只覆盖一个行为单元，且不重复已完成 GPUI child slices。
+6. Beads `homie-wgv` 更新为已验证状态后才可关闭。
 
 ## 8. Beads 追踪
 

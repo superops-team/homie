@@ -82,6 +82,8 @@ homie/scripts/package.sh --create-dmg
 
 更清晰方案：新增 `homie/scripts/package.ts` 或 `release.ts` 作为 orchestrator，shell 脚本保留为底层 phase。考虑到仓库当前没有 Bun 依赖，第一阶段推荐 shell phase 化，不引入新运行时。
 
+首阶段只允许保守方案：在现有 `package.sh` 内部做函数化和参数化。不得在 `homie-d5w` 中引入 Bun/TypeScript、Python 发布编排器或新的 release runtime。若后续确实需要更强脚本语言，必须另建 PRD/spec 并重新评估依赖、license、CI 缓存和维护成本。
+
 ### 3.3 Preflight 前置内容
 
 preflight 至少检查：
@@ -111,6 +113,22 @@ preflight 至少检查：
 ### 3.5 与 full dev bundle 的关系
 
 `full-dev-bundle-smoke` 的 smoke 脚本应复用 `verify` phase 中的核心检查。package verify 和 dev smoke 不应维护两套 bundle 结构知识。
+
+关系约束：
+
+- 若 `full-dev-bundle-smoke` 已先实现 smoke helper，`package-release-phases` 应复用或迁移同一组检查，不重新发明 bundle manifest/codesign/临时 Engine smoke 逻辑。
+- 若本 PRD 先实现 `verify_app`，`full-dev-bundle-smoke` 后续只能调用该 helper 或在 OpenSpec 中说明差异。
+- 两者都不得改变 signing/notary 语义；`verify` 只验证，不隐式签名、notarize 或重写 bundle。
+
+### 3.6 首阶段关闭口径
+
+`homie-d5w` 首阶段只关闭 package/release 的可验证分段基础：
+
+- 默认无参数完整流程行为保持不变。
+- 新增 `--phase preflight` 与 `--phase verify --app <path>`。
+- `verify` 覆盖 plist、核心二进制、manifest 数量、remote helper catalog、codesign 和可选临时 Engine smoke。
+- `--local-arm64` 只作为本机快速构建模式，不替代 release universal 流程。
+- 不新增发布运行时，不改变 notary/signing env 名称，不改变 updater artifact 格式。
 
 ## 4. 实施步骤
 
@@ -155,13 +173,24 @@ homie/scripts/package.sh --local-arm64 --phase build-app
 - bundle job 继续通过。
 - release publishing guard 测试继续通过。
 
+### 6.4 风险控制
+
+| 风险 | 控制 |
+|------|------|
+| 函数化重排改变默认 release 行为 | 先加 characterization log/case，默认流程输出 app 结构和关键 artifact 数量必须一致 |
+| `verify-only` 隐式修改 bundle | `verify` phase 禁止签名、复制、notary、删除，只读检查并退出 |
+| `--skip-build` 使用 stale artifact | verify 必须检查 app 内版本、manifest 数量、helper manifest 与当前 source 是否一致或明确记录 source mismatch |
+| `--local-arm64` 被误当 release | 文档和输出都标记 local-only；notary/DMG/update zip 不接受 local-only 产物 |
+| 与 full dev smoke 重复 | 复用检查 helper，OpenSpec alignment 记录唯一 bundle 验证口径 |
+
 ## 7. 验收标准
 
 1. 默认 `package.sh` 行为保持兼容。
 2. `preflight` 能在长构建前发现工具/target/signing/notary 的配置错误。
 3. `verify-only` 能验证任意已生成 app。
 4. CI bundle job 复用 phase 化 verify。
-5. Beads `homie-d5w` 更新为已验证状态后才可关闭。
+5. OpenSpec alignment 证明 `full-dev-bundle-smoke` 与 package verify 没有两套冲突的 bundle 结构知识。
+6. Beads `homie-d5w` 更新为已验证状态后才可关闭。
 
 ## 8. Beads 追踪
 

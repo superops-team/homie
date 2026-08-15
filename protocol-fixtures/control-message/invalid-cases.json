@@ -1,0 +1,26 @@
+[
+  {
+    "name": "non-object",
+    "wire": ["not", "an", "object"]
+  },
+  {
+    "name": "request-missing-id",
+    "wire": {"method": "hello"}
+  },
+  {
+    "name": "request-method-wrong-type",
+    "wire": {"id": 1, "method": 7}
+  },
+  {
+    "name": "event-missing-seq",
+    "wire": {"event": "session.updated"}
+  },
+  {
+    "name": "error-missing-id",
+    "wire": {"err": {"code": "bad_request", "message": "fixture error"}}
+  },
+  {
+    "name": "error-wrong-shape",
+    "wire": {"id": 2, "err": "bad_request"}
+  }
+]
