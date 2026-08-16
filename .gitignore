@@ -157,3 +157,7 @@ sidecar/node_modules/
 
 # Keep repository hooks tracked; they are enabled with:
 # git config core.hooksPath .githooks
+
+# Local TRAE/agent skill state
+.agents/
+skills-lock.json
