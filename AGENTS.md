@@ -158,6 +158,36 @@ openspec/changes/<change-id>/
 
 OpenSpec must map every PRD requirement to executable tasks and verification. Do not implement from chat context alone.
 
+## Version Tagging Rules
+
+`v0.1.0` is the development baseline tag for the current Homie main branch.
+
+Every functional change after this baseline must create a new annotated Git tag
+after implementation and verification are complete. Use SemVer-style tags:
+
+```text
+v<major>.<minor>.<patch>
+```
+
+Version increment rules:
+
+- Patch (`v0.1.0` -> `v0.1.1`): bug fixes, verification hardening, narrow internal refactors, documentation/process updates that affect development behavior.
+- Minor (`v0.1.x` -> `v0.2.0`): new user-visible features, new runtime capabilities, new package/release behavior, new durable component contracts.
+- Major (`v0.x.y` -> `v1.0.0` or later major): intentional breaking changes to user workflows, persisted state, wire protocol, public CLI/MCP behavior, package/update compatibility, or provider/credential contracts.
+
+Each tag message must describe the delivered change clearly enough to be useful
+without reading the commit diff. Include:
+
+- short summary of the feature/fix/refactor;
+- Beads id(s) and `change_id`;
+- main implementation areas;
+- verification evidence path(s);
+- known limitations or deferred follow-up.
+
+Do not tag unverified work. Do not reuse or move an existing tag unless the user
+explicitly asks for a tag repair. If a tag points at the wrong commit, create a
+new corrected tag and document why.
+
 ## Implementation Guidance
 
 - Keep changes scoped to the current task.
