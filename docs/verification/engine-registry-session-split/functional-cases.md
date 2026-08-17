@@ -165,3 +165,61 @@ cargo check -p homie-engine
 通过标准：fmt 干净、无 warning。
 
 证据路径：`docs/verification/engine-registry-session-split/fc-13-static-gates.log`
+
+---
+
+# S4 落盘时机抽取（PERSIST_DEBOUNCE + Drop + spawn_persist_flusher + load/persist/flush_dirty/persist_now/records_for_persistence）
+
+### FC-14: flusher.rs 抽取完成且只含落盘时机
+
+```bash
+test -s homie/crates/homie-engine/src/registry/flusher.rs
+rg -n "pub fn spawn\(|pub fn kill\(|pub fn restore\(|apply_hook_metadata|adopt_remote|ensure_session_awake" \
+  homie/crates/homie-engine/src/registry/flusher.rs
+```
+
+通过标准：文件存在；`rg` 无 live 协调方法命中（flusher.rs 只含 debounce / Drop / flusher 线程 /
+load / persist / flush_dirty / persist_now / records_for_persistence）。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-14-flusher-pure.log`
+
+### FC-15: registry focused tests（S4）
+
+```bash
+cargo test -p homie-engine registry::tests
+```
+
+通过标准：`registry::tests` 18 passed / 0 failed / 1 ignored。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-15-flusher-tests.log`
+
+### FC-16: 全量行为不变（S4）
+
+```bash
+cargo test -p homie-engine
+```
+
+通过标准：lib 278 passed / 0 failed / 3 ignored，全部集成测试 0 failed。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-16-full-tests.log`
+
+### FC-17: 静态门禁（S4）
+
+```bash
+cargo fmt --check
+cargo check -p homie-engine
+```
+
+通过标准：fmt 干净、check 0 warning。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-17-static-gates.log`
+
+### FC-18: registry.rs < 800 行验收
+
+```bash
+wc -l homie/crates/homie-engine/src/registry.rs
+```
+
+通过标准：`registry.rs` 行数 < 800（实测 758）。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-18-line-budget.log`
