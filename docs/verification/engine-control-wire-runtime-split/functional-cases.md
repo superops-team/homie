@@ -242,3 +242,45 @@ cargo check -p homie-engine
 通过标准：fmt 干净、无 warning。
 
 证据路径：`docs/verification/engine-control-wire-runtime-split/fc-19-static-gates.log`
+
+---
+
+# S4-b 领域逻辑下沉（prompt-injection → control/inject）
+
+## FC-20: prompt-injection 领域下沉到 control/inject.rs
+
+```bash
+rg -n "fn (prepare_agent_input|accept_claude_workspace_trust|inject_initial_prompt|wait_until_ready|screen_settled|wait_for_echo|verification_probe|is_claude_workspace_trust_screen)" homie/crates/homie-engine/src/control/inject.rs
+rg -n "fn (prepare_agent_input|inject_initial_prompt|wait_until_ready|wait_for_echo|verification_probe)" homie/crates/homie-engine/src/control/handlers.rs
+rg -n "^[^/]*\b(ControlServer|UnixListener|UnixStream|super::)\b" homie/crates/homie-engine/src/control/inject.rs
+wc -l homie/crates/homie-engine/src/control/handlers.rs homie/crates/homie-engine/src/control/inject.rs
+```
+
+通过标准：`prepare_agent_input` 及其全部辅助函数（含 Claude workspace-trust 自动确认、
+initial prompt 注入、echo 验证、就绪等待、屏幕稳定等待）由 `control/inject.rs` 拥有；
+handlers.rs 不再定义它们；inject.rs 无 transport/runtime 依赖；handlers.rs 从 1,977 行降至
+1,582 行。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-20-inject-sink.log`
+
+## FC-21: 全量行为不变
+
+```bash
+cargo test -p homie-engine
+```
+
+通过标准：抽取后全部测试（lib 278 + 集成测试）全绿，0 failed。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-21-full-tests.log`
+
+## FC-22: 静态门禁
+
+```bash
+cargo fmt -p homie-engine -- --check
+cargo check -p homie-engine
+git status --porcelain
+```
+
+通过标准：fmt 干净、无 warning；仅改动 control 模块内文件。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-22-static-gates.log`

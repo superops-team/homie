@@ -1,4 +1,5 @@
-use super::handlers::{is_claude_workspace_trust_screen, shell_pty_environment};
+use super::handlers::shell_pty_environment;
+use super::inject::is_claude_workspace_trust_screen;
 use super::*;
 use crate::detect::ManifestEngine;
 use homie_proto::WIRE_VERSION;

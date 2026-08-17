@@ -25,6 +25,7 @@ use sha2::{Digest, Sha256};
 use crate::registry::Registry;
 mod codec;
 mod handlers;
+mod inject;
 mod runtime;
 mod wire;
 pub(crate) use handlers::new_record;

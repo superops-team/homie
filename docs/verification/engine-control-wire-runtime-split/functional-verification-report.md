@@ -200,3 +200,52 @@
   `session_resume` 家族的 spawn/resume/migrate 领域逻辑仍内联在 handler，且与
   `ControlServer` 字段（injection/socket_path/logs_dir/holder/remote）耦合较深，
   需按独立切片继续下沉。
+
+---
+
+# S4-b 领域逻辑下沉（prompt-injection）功能验证
+
+## 1. 结论
+
+`engine-control-wire-runtime-split` 第四切片下半部（S4-b 领域逻辑下沉）第二个增量
+`prompt-injection` 验证通过。
+
+已完成：
+
+- 新增 `homie/crates/homie-engine/src/control/inject.rs`（408 行）。
+- 从 `control/handlers.rs` 抽出初始 prompt 注入领域（prepare_agent_input 及全部辅助函数）：
+  `prepare_agent_input` / `accept_claude_workspace_trust` / `inject_initial_prompt` /
+  `is_claude_workspace_trust_screen` / `wait_for_echo` / `submit_typed_prompt` /
+  `agent_started_working` / `screen_text` / `wait_until_ready` / `screen_settled` /
+  `verification_probe` / `with_session` / `sleep_until` / `EchoOutcome` 及全部注入窗口常量。
+- `control/handlers.rs` 从 1,977 行降至 1,582 行（-395 行）。
+- 函数体一字未改，仅将 `prepare_agent_input` 可见性提升为 `pub(super)`；
+  `is_claude_workspace_trust_screen` 保持 `pub(super)` 供 tests 引用。
+- `session_spawn` / `session_spawn_remote` 经 `use super::inject::prepare_agent_input`
+  调用，行为完全不变。
+
+## 2. Case 执行结果
+
+| Case | 状态 | 证据 |
+|---|---|---|
+| FC-20 prompt-injection 下沉到 control/inject.rs | pass | inject.rs 拥有全部注入函数；handlers.rs 不再定义；无 transport 依赖；handlers.rs 1,977→1,582 行 |
+| FC-21 全量行为不变 | pass | 278 lib + 集成测试全绿，0 failed |
+| FC-22 静态门禁 | pass | `cargo fmt --check` 干净、`cargo check` 无 warning、仅 control 模块改动 |
+
+## 3. 关键证据
+
+- `control/inject.rs` 仅依赖 `Arc<Mutex<Registry>>` + session id，无 ControlServer/socket/
+  transport 依赖，属纯 session-input 领域，可脱离 daemon 单测。
+- `cargo test -p homie-engine`：278 lib tests（3 ignored）+ 集成测试全部 `0 failed`。
+  （首次全量跑出现 `checkpoint::adoption_seeds_from_the_checkpoint_not_the_raw_tail`
+  偶发时序失败，单测重跑 3/3 通过，与本次下沉无关。）
+- `cargo fmt --check` clean；`cargo check` 0 warning（移除 handlers.rs 残留 unused
+  `Mutex`/`Instant` import）。
+- 行数：`handlers.rs` 1,977 → 1,582；`control/inject.rs` 新增 408 行。
+
+## 4. 残余风险
+
+- S4-b 剩余大项：`session_spawn` / `session_spawn_remote` / `session_migrate` /
+  `session_resume` 家族的 spawn/resume/migrate 领域逻辑仍内联在 handler，且与
+  `ControlServer` 字段（injection/socket_path/logs_dir/holder/remote）耦合较深，
+  需按独立切片继续下沉。
