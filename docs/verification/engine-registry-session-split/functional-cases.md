@@ -117,3 +117,51 @@ cargo check -p homie-engine
 通过标准：fmt 干净、无 warning（pub use 重导出保留公共可达性，无 dead_code）。
 
 证据路径：`docs/verification/engine-registry-session-split/fc-09-static-gates.log`
+
+---
+
+# S3 迁移逻辑抽取（SplitMigrationReport + migrate_envelope_to_split）
+
+### FC-10: migrate.rs 抽取完成且无 live-session 依赖
+
+```bash
+test -s homie/crates/homie-engine/src/registry/migrate.rs
+rg -n "Registry|Session::spawn|spawn_persist_flusher|HashMap<.*Session" \
+  homie/crates/homie-engine/src/registry/migrate.rs
+```
+
+通过标准：文件存在；`rg` 无 Registry/Session::spawn/flusher/HashMap<Session> 命中。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-10-migrate-pure.log`
+
+### FC-11: migrate focused tests
+
+```bash
+cargo test -p homie-engine registry::tests split_store -- --nocapture
+```
+
+通过标准：`split_store_dry_run_migration_writes_nothing`、
+`split_store_migration_preserves_backup_and_loads_records` 全绿。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-11-migrate-tests.log`
+
+### FC-12: 全量行为不变（S3）
+
+```bash
+cargo test -p homie-engine
+```
+
+通过标准：全部测试（lib + 集成）全绿，0 failed。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-12-full-tests.log`
+
+### FC-13: 静态门禁（S3）
+
+```bash
+cargo fmt -p homie-engine -- --check
+cargo check -p homie-engine
+```
+
+通过标准：fmt 干净、无 warning。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-13-static-gates.log`
