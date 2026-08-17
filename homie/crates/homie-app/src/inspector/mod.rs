@@ -4,6 +4,7 @@
 //! This module owns selection tracking, session/PR/artifact projections,
 //! background Git refreshes, unified-diff snapshots, and diff virtualization.
 
+mod policy;
 mod projection;
 mod state;
 
@@ -42,6 +43,8 @@ use crate::review_prompt::{ReviewEvidence, ReviewPrompt};
 use crate::store::{InspectorTab, StoreRuntime};
 
 use state::{AskDraft, DiffContext, LoadState, ReviewAction, ReviewLoadState};
+
+use policy::{git_is_not_a_repository, git_is_not_installed, should_show_blocking_git_loading};
 
 use projection::{
     artifact_count, artifact_title, artifact_visible, checks_rollup, discussion_state, folder_name,
@@ -2679,23 +2682,6 @@ impl WorkbenchInspector {
                     .child(body.into()),
             )
     }
-}
-
-fn git_is_not_a_repository(error: &str) -> bool {
-    let error = error.to_ascii_lowercase();
-    error.contains("not a git repository")
-        || error.contains("session cwd is not inside a git repository")
-}
-
-fn git_is_not_installed(error: &str) -> bool {
-    let error = error.to_ascii_lowercase();
-    error.contains("git is not installed")
-        || error.contains("git: command not found")
-        || error.contains("git: not found")
-}
-
-fn should_show_blocking_git_loading(context_changed: bool, state: &LoadState) -> bool {
-    context_changed || matches!(state, LoadState::NoSession)
 }
 
 impl Render for WorkbenchInspector {
