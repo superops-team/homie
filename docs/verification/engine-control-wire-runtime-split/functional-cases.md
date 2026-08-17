@@ -112,3 +112,54 @@ cargo check -p homie-engine
 通过标准：fmt 干净、无 warning。
 
 证据路径：`docs/verification/engine-control-wire-runtime-split/fc-09-static-gates.log`
+
+---
+
+# S3 runtime 生命周期抽取（bind 循环、订阅句柄、连接守卫、空闲关停、远程恢复）
+
+## FC-10: runtime.rs 抽取完成且无 transport 泄漏
+
+```bash
+# runtime.rs 拥有生命周期符号，control.rs 不再定义这些 impl 方法
+bash /tmp/fc10.sh
+```
+
+通过标准：`bind` / `daemon_shutdown` / `impl Drop for ControlServer` /
+`SubscriptionHandle` / `ActiveConnectionGuard` / `spawn_remote_restore` /
+`idle_shutdown_refusal` / `daemon_prepare_shutdown` / `retire_legacy_remote_sessions` /
+`restore_remote_bindings` / `legacy_remote_marker` 全部由 `runtime.rs` 拥有；
+`control.rs` 不再定义它们；`runtime.rs` 不含 `serve`/`handle_line`/`dispatch`。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-10-runtime-pure.log`
+
+## FC-11: runtime focused tests
+
+```bash
+cargo test -p homie-engine control::runtime::tests -- --nocapture
+```
+
+通过标准：`idle_shutdown_requires_exactly_the_requesting_client_and_no_session`、
+`dropping_an_event_subscription_stops_its_detached_thread` 两个测试全绿。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-11-runtime-tests.log`
+
+## FC-12: 全量行为不变
+
+```bash
+cargo test -p homie-engine
+```
+
+通过标准：抽取后全部测试（lib 278 + 集成测试）全绿，0 failed。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-12-full-tests.log`
+
+## FC-13: 静态门禁与范围守卫
+
+```bash
+cargo fmt -p homie-engine -- --check
+cargo check -p homie-engine
+```
+
+通过标准：fmt 干净、无 warning（移除残留 unused `Ordering` import）。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-13-static-gates.log`
