@@ -11,7 +11,7 @@
 //! `not_found` control error, which is what an older daemon does for a method
 //! it does not know, rather than dropping the connection.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -24,6 +24,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::registry::Registry;
+mod wire;
+use wire::{
+    decode, encode, io_control_error, migrate_control_error, poisoned, resolve_on_path,
+    write_message,
+};
 
 /// Identifies this engine in the handshake, so a client can tell which
 /// implementation it reached.
@@ -2368,75 +2373,6 @@ fn idle_shutdown_refusal(live_sessions: usize, connections: usize) -> Option<&'s
         Some("another control client still requires the Engine")
     } else {
         None
-    }
-}
-
-/// Serializes one message onto the shared write half. Responses and event
-/// frames interleave here; the mutex keeps each line whole.
-fn write_message(writer: &Arc<Mutex<UnixStream>>, message: &ControlMessage) -> std::io::Result<()> {
-    let mut bytes = serde_json::to_vec(message)?;
-    bytes.push(b'\n');
-    let mut stream = writer
-        .lock()
-        .map_err(|_| std::io::Error::other("writer poisoned"))?;
-    stream.write_all(&bytes)?;
-    stream.flush()
-}
-
-fn poisoned<T>(_: T) -> ControlError {
-    ControlError::internal("engine state is poisoned")
-}
-
-/// Decodes params into the shared `homie-proto` type for the method — the same
-/// types the app itself serializes, so a shape drift is a compile error, not
-/// a wire bug.
-fn decode<T: serde::de::DeserializeOwned>(params: Option<JsonValue>) -> Result<T, ControlError> {
-    serde_json::from_value(params.unwrap_or_else(|| json!({})))
-        .map_err(|error| ControlError::bad_request(error.to_string()))
-}
-
-fn encode<T: serde::Serialize>(value: &T) -> Result<JsonValue, ControlError> {
-    serde_json::to_value(value).map_err(|error| ControlError::internal(error.to_string()))
-}
-
-/// Resolves a binary on the daemon's PATH, as the readiness check needs.
-fn resolve_on_path(binary: &str) -> Option<String> {
-    if binary.contains('/') {
-        return Path::new(binary).exists().then(|| binary.to_string());
-    }
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        let candidate = Path::new(dir).join(binary);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if std::fs::metadata(&candidate)
-                .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-                .unwrap_or(false)
-            {
-                return Some(candidate.to_string_lossy().into_owned());
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            if candidate.is_file() {
-                return Some(candidate.to_string_lossy().into_owned());
-            }
-        }
-    }
-    None
-}
-fn migrate_control_error(error: crate::migrate::MigrateError) -> ControlError {
-    match error {
-        crate::migrate::MigrateError::BadRequest(message) => ControlError::bad_request(message),
-        crate::migrate::MigrateError::Internal(message) => ControlError::internal(message),
-    }
-}
-
-fn io_control_error(error: std::io::Error) -> ControlError {
-    match error.kind() {
-        std::io::ErrorKind::NotFound => ControlError::not_found(error.to_string()),
-        _ => ControlError::internal(error.to_string()),
     }
 }
 
