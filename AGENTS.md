@@ -39,7 +39,8 @@ Meaningful changes must follow this sequence:
 5. Complete spec review and record evidence under `docs/verification/<change-id>/`.
 6. Create or update `openspec/changes/<change-id>/plan.md` and `tasks.md`.
 7. Prove PRD/spec to OpenSpec alignment in `openspec/changes/<change-id>/alignment-report.md` or `docs/verification/<change-id>/openspec-alignment-report.md`.
-8. Implement with SDD/TDD from the OpenSpec tasks.
+8. Implement with SDD/TDD from the OpenSpec tasks, following the RED→GREEN→REFACTOR
+   loop and anti-gaming rules in `docs/development/standards.md` (§6).
 9. Run local verification and record results under `docs/verification/<change-id>/`.
 10. Update or close the Beads issue only after evidence matches the delivered state.
 
@@ -197,6 +198,7 @@ new corrected tag and document why.
 - Treat credential custody and virtual key issuance as security-sensitive code.
 - Avoid leaking real provider keys into managed agent configuration.
 - Add tests around behavior that affects agent launch, request proxying, persistence, credentials, or orchestration.
+- Treat credential custody, virtual key issuance, LLM proxying, orchestration, concurrency, and data-loss-adjacent code as Tier 3 (see `docs/development/standards.md` §6.3): write a failure model and run mutation + adversarial verification.
 
 ## Security Baseline
 

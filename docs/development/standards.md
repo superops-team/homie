@@ -131,6 +131,60 @@ Choose the smallest meaningful test first:
 
 Do not claim visual or runtime correctness from `cargo check` alone.
 
+### 6.1 TDD Loop (RED → GREEN → REFACTOR)
+
+"SDD/TDD" is not a single step. Each behavior follows a loop:
+
+1. **RED** — write the test for one behavior and run it first. Watch it fail.
+   The failure must be an assertion failure, not an import / compile error. If
+   the module does not exist yet, create a stub that raises (e.g.
+   `unimplemented!()`) so the test fails on behavior. A new test that passes
+   immediately is either vacuous or already covered: prove which by breaking
+   the implementation with a one-off throwaway mutant, watching the test fail,
+   then restoring — and record it as pre-existing behavior kept as regression
+   armor.
+2. **GREEN** — write the least code that makes the failing test pass, then run
+   the full suite, not just the new test.
+3. **REFACTOR** — while green, improve names and structure. Behavioral
+   assertions are frozen: implementation refactors touch no test files. Any
+   change to an assertion is a behavior change and must go back to SPEC.
+
+### 6.2 Anti-Gaming Rules (absolute)
+
+The gauntlet only creates trust if it cannot be gamed:
+
+1. Never weaken a test to make it pass (no broadened assertions, added skips,
+   raised tolerances, or deleted failing tests).
+2. Never edit a test and the implementation in the same step to reach green.
+3. Never mock the unit under test, or mock so much that only the mocks are
+   exercised. Mock boundaries (network, clock, filesystem), not logic.
+4. Never chase the coverage number. A test added only to touch lines, with no
+   meaningful assertion, is gaming.
+5. Never report a layer you did not run. A skipped layer must state its reason.
+6. A failing gauntlet blocks done — you are not finished while any layer fails.
+
+### 6.3 Calibration (Tier 1 / 2 / 3)
+
+Scale effort to blast radius, and record which tier was chosen:
+
+- **Tier 1 — trivial** (typo, comment, config value): full suite + lint. No new
+  test required, but state why the change is untestable or already covered.
+- **Tier 2 — normal** (bug fix, small feature): full loop. Bug fixes MUST start
+  with a RED test that reproduces the bug.
+- **Tier 3 — high stakes** (money, auth, data loss, concurrency, public API,
+  credentials and virtual-key custody): start with a **failure model** — list
+  the specific ways this change can hurt (race, partial write, hostile input,
+  overflow, unbounded growth, failed rollback, credential leak) and add a layer
+  per mode that actually catches it (race/stress tests, fuzzing, rollback
+  rehearsal, latency benchmarks, API-compat checks, contract tests,
+  logging/metric assertions). Then run: full loop + property-based tests +
+  mutation testing + one adversarial pass (explicitly try to break your own
+  implementation with hostile inputs). Failure modes deliberately not covered
+  go in EVIDENCE as known limits.
+
+For credential custody, virtual key issuance, LLM proxying, orchestration,
+concurrency, and data-loss-adjacent code, treat Tier 3 as the default.
+
 ## 7. Documentation Standards
 
 - PRD/spec files are Chinese and live under `prd-spec/`.
