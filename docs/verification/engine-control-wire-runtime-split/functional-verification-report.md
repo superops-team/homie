@@ -117,3 +117,45 @@
 
 - S4 handler 下沉（session_*/host_*/worktree_* 下沉到 registry/session/remote manager）
   尚未执行，体量最大、blast radius 大，建议单独切片确认，目标 `control.rs < 800` 行。
+
+---
+
+# S4-a handler 机械下沉 功能验证
+
+## 1. 结论
+
+`engine-control-wire-runtime-split` 第四切片上半部（S4-a handler 机械下沉）功能验证通过。
+
+已完成：
+
+- 新增 `homie/crates/homie-engine/src/control/handlers.rs`（2,082 行）。
+- 从 `control.rs` 抽出 43 个 handler 方法（`hello` / `session_*` / `host_*` / `worktree_*` /
+  `governor_configure` / `client_set_active` / `browser_call` / `resolve_host` 等）及
+  20 个自由函数/常量/枚举（`new_record` / `shell_pty_environment` / `inject_initial_prompt` /
+  `wait_for_echo` / `EchoOutcome` / 注入窗口常量等）。
+- 新增 `homie/crates/homie-engine/src/control/tests.rs`（886 行），tests 模块随迁。
+- `control.rs` 从 3,328 行降至 460 行（< 800 行目标达成）；wire shape 与行为完全不变。
+- 本切片为纯机械搬迁：方法体/函数体一字未改，仅调整可见性为 `pub(super)` 并将
+  `EchoOutcome`/注入窗口常量提升到模块顶层。
+
+## 2. Case 执行结果
+
+| Case | 状态 | 证据 |
+|---|---|---|
+| FC-14 handlers.rs 抽取 + transport 留 control.rs | pass | control.rs 460 行；不再定义 handler；handlers.rs 无 serve/handle_line/dispatch |
+| FC-15 全量行为不变 | pass | 278 lib + 集成测试全绿，0 failed |
+| FC-16 静态门禁 | pass | `cargo fmt --check` 干净、`cargo check` 无 warning、仅 control 模块改动 |
+
+## 3. 关键证据
+
+- `control.rs` 460 行；`ControlServer` 只保留构造、访问器、serve/handle_line/dispatch、
+  socket_path、process_executable_hash、next_session_id 与 tests 模块声明。
+- `control/handlers.rs` 46 个 `pub(super)` handler 方法 + 20 个自由函数；不含 transport 层。
+- `new_record` 经 `pub(crate) use handlers::new_record` 重导出，`mcp/host.rs` 调用不变。
+- `cargo test -p homie-engine`：278 lib tests + 集成测试全部 `0 failed`。
+- `cargo fmt --check` clean；`cargo check` 0 warning。
+
+## 4. 残余风险
+
+- S4-a 仅为机械下沉，handler 方法体内仍直接 `self.registry.lock()` 等跨领域操作；
+  真正的领域逻辑下沉（registry/session/remote manager）留待 S4-b。

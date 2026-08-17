@@ -1,0 +1,2082 @@
+//! Control-channel method handlers.
+//!
+//! The per-method business logic (handshake, session spawn/list/resume, host and
+//! worktree operations, hook reporting, governance, browser calls). These stay as
+//! `impl ControlServer` methods so they can reach the private fields, but they live
+//! apart from the transport layer (serve/handle_line/dispatch) and the wire codec
+//! because they change for protocol/business reasons, not framing ones.
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use homie_proto::{ControlError, JsonValue, WIRE_VERSION};
+use serde_json::{Value, json};
+
+use crate::registry::Registry;
+
+use super::ControlServer;
+use super::codec::{history_entry_to_wire, worktree_to_wire};
+use super::wire::{
+    decode, encode, io_control_error, migrate_control_error, poisoned, resolve_on_path,
+};
+use super::{BUILD, next_session_id, process_executable_hash};
+
+impl ControlServer {
+    pub(super) fn hello(&self, params: Option<JsonValue>) -> Result<JsonValue, ControlError> {
+        let proto = params
+            .as_ref()
+            .and_then(|value| value.get("proto"))
+            .and_then(Value::as_u64)
+            .unwrap_or(WIRE_VERSION as u64);
+        if proto != WIRE_VERSION as u64 {
+            return Err(ControlError::version_mismatch(format!(
+                "client speaks protocol {proto}, this engine speaks {WIRE_VERSION}"
+            )));
+        }
+        Ok(json!({
+            "proto": WIRE_VERSION,
+            "build": BUILD,
+            "engineKind": homie_proto::RUST_ENGINE_KIND,
+            "pid": std::process::id() as i32,
+            "executableHash": process_executable_hash(),
+        }))
+    }
+
+    pub(super) fn session_capabilities(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionCapabilitiesParams = decode(params)?;
+        let registry = self.registry.lock().map_err(poisoned)?;
+        let record = registry
+            .record(&p.session_id.0)
+            .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?;
+        let capabilities =
+            crate::driver::capabilities_for_manifest_id(record.effective_kind().id());
+        encode(&homie_proto::SessionCapabilitiesResult {
+            session_id: p.session_id,
+            capabilities,
+        })
+    }
+
+    /// Starts an agent and begins watching it.
+    ///
+    /// The command line comes from the manifest's agent descriptor, so this
+    /// works for any agent that has one without code changes. Two limits worth
+    /// stating: hook and MCP injection are not ported yet, so a Claude session
+    /// started here is screen-detected rather than hook-driven; and `shell` and
+    /// `generic` need an explicit `argv`, since their manifests declare no
+    /// binary.
+    pub(super) fn session_spawn(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let raw = params.ok_or_else(|| ControlError::bad_request("params are required"))?;
+        // Tests and scripts may pass a raw argv; the app never does. Read it
+        // before the typed decode consumes the value.
+        let argv: Vec<String> = raw
+            .get("argv")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let p: homie_proto::SessionSpawnParams = decode(Some(raw))?;
+        if p.host.is_some() {
+            return self.session_spawn_remote(p, argv);
+        }
+        let kind = p.kind.id().to_string();
+        // A generic kind carries the user's command line inside itself.
+        let argv = if argv.is_empty() {
+            match p.kind.command() {
+                Some(command) if !command.is_empty() => {
+                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+                    vec![shell, "-lc".into(), command.to_string()]
+                }
+                _ if kind == homie_proto::AgentKind::SHELL_ID => {
+                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+                    vec![shell, "-l".into()]
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            argv
+        };
+
+        // A worktree spawn creates the checkout first, then lands in it.
+        let mut cwd = p.cwd.clone();
+        let mut worktree_path = None;
+        let mut git_branch = None;
+        if p.new_worktree.unwrap_or(false) {
+            let info =
+                crate::git::create_worktree(Path::new(&p.cwd), p.worktree_branch.as_deref(), None)
+                    .map_err(io_control_error)?;
+            git_branch.clone_from(&info.branch);
+            cwd.clone_from(&info.path);
+            worktree_path = Some(info.path);
+        }
+        let cwd_path = PathBuf::from(&cwd);
+        if !cwd_path.is_dir() {
+            return Err(ControlError::bad_request(format!(
+                "cwd {cwd:?} is not a directory"
+            )));
+        }
+
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        let engine = registry.engine();
+        let manifest = engine
+            .manifest(&kind)
+            .ok_or_else(|| ControlError::not_found(format!("no manifest for agent {kind:?}")))?;
+        let descriptor = manifest.agent.clone().unwrap_or_default();
+        let authority = descriptor.authority();
+
+        let id = next_session_id();
+        // Build the complete agent argv before `spawn_spec`: agents declaring
+        // `returnToLoginShell` need every manifest and injection argument
+        // quoted inside the shell's `-c` command.
+        let mut launch_args = argv.clone();
+        let mut agent_session_id = None;
+        if descriptor.binary.is_some() {
+            launch_args.extend(descriptor.spawn_args.iter().cloned());
+            agent_session_id = descriptor.session_id_flag.as_ref().map(|flag| {
+                let uuid = crate::inject::uuid_v4();
+                launch_args.push(flag.clone());
+                launch_args.push(uuid.clone());
+                uuid
+            });
+            if let Some(injection) = &self.injection {
+                launch_args.extend(crate::inject::injection_args(
+                    &descriptor.injection,
+                    &injection.inject_dir,
+                    &injection.cli_path,
+                ));
+            }
+        }
+
+        let inherited: Vec<(String, String)> = std::env::vars().collect();
+        let mut pty = match descriptor.spawn_spec(&cwd_path, inherited.clone(), &launch_args) {
+            Some(spec) => spec,
+            // No binary in the manifest: the caller has to say what to run.
+            None if !argv.is_empty() => {
+                let mut spec = crate::pty::PtySpec::new(argv.clone(), &cwd_path);
+                spec.env = shell_pty_environment(inherited);
+                spec
+            }
+            None => {
+                return Err(ControlError::bad_request(format!(
+                    "agent {kind:?} declares no binary, so argv is required"
+                )));
+            }
+        };
+
+        let mut record = new_record(&id, &kind, &cwd);
+        // A linked worktree is an execution cwd inside the project selected
+        // by the user; it does not become a new first-level sidebar project.
+        record.project_id = crate::registry::session_project_id(&p.cwd, None);
+        registry.ensure_session_project(&p.cwd, None);
+        if let Some(title) = &p.title {
+            record.title = title.clone();
+            record.title_source = homie_proto::TitleSource::HomieAssigned;
+        }
+        record.worktree_path = worktree_path;
+        record.git_branch = git_branch.or_else(|| crate::git::branch(&cwd_path));
+        record.parent = p.parent.clone();
+        if let (Some(cols), Some(rows)) = (p.initial_cols, p.initial_rows) {
+            pty.cols = cols.clamp(2, u16::MAX as i64) as u16;
+            pty.rows = rows.clamp(2, u16::MAX as i64) as u16;
+        }
+
+        // Injection environment and the caller-minted conversation UUID. The
+        // argv side was assembled before `spawn_spec` so its shell wrapper
+        // contains the complete command.
+        if descriptor.binary.is_some() {
+            if let Some(injection) = &self.injection {
+                pty.env
+                    .push((crate::inject::SESSION_ID_ENV.into(), id.clone()));
+                pty.env.push((
+                    crate::inject::SOCKET_ENV.into(),
+                    self.socket_path.to_string_lossy().into_owned(),
+                ));
+                pty.env.push((
+                    crate::inject::CLI_ENV.into(),
+                    injection.cli_path.to_string_lossy().into_owned(),
+                ));
+            }
+            if let Some(uuid) = &agent_session_id {
+                record.agent_session_id = Some(uuid.clone());
+                if descriptor.injection.claude_hooks
+                    && let Ok(home) = std::env::var("HOME")
+                {
+                    record.transcript_path = Some(
+                        crate::inject::claude_transcript_path(Path::new(&home), &cwd, uuid)
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
+                }
+            }
+        }
+        let spec = crate::session::SessionSpec {
+            id: id.clone(),
+            pty,
+            manifest_id: kind.clone(),
+            authority,
+            logs_dir: self.logs_dir.clone(),
+            holder: self.holder.clone(),
+            remote: None,
+            defer_launch: true,
+        };
+        registry
+            .spawn(spec, record)
+            .map_err(|error| ControlError::internal(error.to_string()))?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &id);
+
+        // An initial prompt is typed once the TUI can actually receive input,
+        // and verified on screen afterward — ported from the Swift
+        // `injectInitialPrompt`, which replaced a blind fixed delay that
+        // raced Claude Code's boot and lost keystrokes into a composer that
+        // did not exist yet.
+        let prompt = p.initial_prompt.clone().filter(|prompt| !prompt.is_empty());
+        if kind == homie_proto::AgentKind::CLAUDE_CODE_ID || prompt.is_some() {
+            let registry = Arc::clone(&self.registry);
+            let session_id = id.clone();
+            std::thread::spawn(move || {
+                prepare_agent_input(
+                    &registry,
+                    &session_id,
+                    kind == homie_proto::AgentKind::CLAUDE_CODE_ID,
+                    prompt.as_deref(),
+                );
+            });
+        }
+
+        let record = registry
+            .records()
+            .into_iter()
+            .find(|record| record.id.0 == id)
+            .ok_or_else(|| ControlError::internal("the new session vanished"))?;
+        // SessionSpawnResult is the record itself, as the reference implementation
+        // answers — not wrapped.
+        serde_json::to_value(&record).map_err(|error| ControlError::internal(error.to_string()))
+    }
+
+    pub(super) fn session_spawn_remote(
+        &self,
+        p: homie_proto::SessionSpawnParams,
+        caller_argv: Vec<String>,
+    ) -> Result<JsonValue, ControlError> {
+        let manager = self
+            .remote
+            .as_ref()
+            .cloned()
+            .ok_or_else(crate::remote::transport_unavailable)?;
+        let binding_store = self.remote_bindings.clone().ok_or_else(|| {
+            ControlError::internal("owner-only remote binding store is unavailable")
+        })?;
+        let host_id = p
+            .host
+            .as_deref()
+            .ok_or_else(|| ControlError::bad_request("remote host is required"))?;
+        let host = self.resolve_host(host_id)?;
+        if p.new_worktree.unwrap_or(false) {
+            return Err(ControlError::bad_request(
+                "remote worktree creation requires the structured workspace RPC",
+            ));
+        }
+        if p.same_repo_as.is_some() {
+            return Err(ControlError::bad_request(
+                "sameRepoAs requires the structured remote workspace RPC",
+            ));
+        }
+
+        let helper = manager.ensure_helper(&host).map_err(io_control_error)?;
+        let persistence = manager
+            .probe_persistence(&host, &helper)
+            .map_err(io_control_error)?;
+        let requested_cwd = if p.cwd.trim().is_empty() {
+            host.default_cwd.clone().unwrap_or_else(|| "~".into())
+        } else {
+            p.cwd.clone()
+        };
+        let captured = manager
+            .capture_environment(
+                &helper,
+                &homie_proto::remote_pty::EnvironmentCaptureRequest {
+                    cwd: Some(requested_cwd),
+                    timeout_millis: 10_000,
+                },
+            )
+            .map_err(io_control_error)?;
+        let cwd = PathBuf::from(&captured.cwd);
+        if !cwd.is_absolute() {
+            return Err(ControlError::internal(
+                "remote Helper returned a non-absolute cwd",
+            ));
+        }
+
+        let kind = p.kind.id().to_string();
+        let (descriptor, engine) = {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            let engine = registry.engine();
+            let manifest = engine.manifest(&kind).ok_or_else(|| {
+                ControlError::not_found(format!("no manifest for agent {kind:?}"))
+            })?;
+            (manifest.agent.clone().unwrap_or_default(), engine)
+        };
+        drop(engine);
+        let authority = descriptor.authority();
+        let inherited = captured
+            .environment
+            .into_iter()
+            .map(|variable| (variable.name, variable.value))
+            .collect::<Vec<_>>();
+
+        let id = next_session_id();
+        let mut agent_session_id = None;
+        let mut launch_args = caller_argv.clone();
+        if descriptor.binary.is_some() {
+            launch_args.extend(descriptor.spawn_args.iter().cloned());
+            agent_session_id = descriptor.session_id_flag.as_ref().map(|flag| {
+                let uuid = crate::inject::uuid_v4();
+                launch_args.push(flag.clone());
+                launch_args.push(uuid.clone());
+                uuid
+            });
+        }
+
+        let argv = if descriptor.binary.is_some() {
+            descriptor
+                .remote_spawn_spec(&cwd, inherited.clone(), &launch_args)
+                .ok_or_else(|| ControlError::internal("remote descriptor has no binary"))?
+                .argv
+        } else if !caller_argv.is_empty() {
+            caller_argv
+        } else if let Some(command) = p.kind.command().filter(|command| !command.is_empty()) {
+            vec![captured.shell.clone(), "-lc".into(), command.to_string()]
+        } else if kind == homie_proto::AgentKind::SHELL_ID {
+            vec![captured.shell.clone(), "-l".into()]
+        } else {
+            return Err(ControlError::bad_request(format!(
+                "agent {kind:?} declares no binary, so argv is required"
+            )));
+        };
+        let mut pty = if descriptor.binary.is_some() {
+            descriptor
+                .remote_spawn_spec(&cwd, inherited, &launch_args)
+                .ok_or_else(|| ControlError::internal("remote descriptor has no binary"))?
+        } else {
+            let mut spec = crate::pty::PtySpec::new(argv, &cwd);
+            spec.env = shell_pty_environment(inherited);
+            spec
+        };
+        if let (Some(cols), Some(rows)) = (p.initial_cols, p.initial_rows) {
+            pty.cols = cols.clamp(2, u16::MAX as i64) as u16;
+            pty.rows = rows.clamp(2, u16::MAX as i64) as u16;
+        }
+
+        let token = random_session_token()?;
+        let launch = homie_proto::remote_pty::LaunchRequest {
+            session_id: id.clone(),
+            session_token: token,
+            argv: pty.argv.clone(),
+            cwd: captured.cwd.clone(),
+            environment: pty
+                .env
+                .iter()
+                .map(
+                    |(name, value)| homie_proto::remote_pty::EnvironmentVariable {
+                        name: name.clone(),
+                        value: value.clone(),
+                    },
+                )
+                .collect(),
+            cols: pty.cols,
+            rows: pty.rows,
+            persistence,
+        };
+
+        let mut record = new_record(&id, &kind, &captured.cwd);
+        record.host = Some(host.id.clone());
+        record.project_id = crate::registry::session_project_id(&captured.cwd, Some(&host.id));
+        record.remote_persistence = Some(persistence);
+        record.parent = p.parent.clone();
+        record.agent_session_id = agent_session_id;
+        if let Some(title) = &p.title {
+            record.title = title.clone();
+            record.title_source = homie_proto::TitleSource::HomieAssigned;
+        }
+        let spec = crate::session::SessionSpec {
+            id: id.clone(),
+            pty,
+            manifest_id: kind.clone(),
+            authority,
+            logs_dir: self.logs_dir.clone(),
+            holder: None,
+            remote: Some(crate::session::RemoteSessionSpec {
+                manager,
+                helper,
+                launch,
+                host_id: host.id.clone(),
+                binding_store,
+            }),
+            defer_launch: false,
+        };
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        registry.ensure_session_project(&captured.cwd, Some(&host.id));
+        registry
+            .spawn(spec, record)
+            .map_err(|error| ControlError::internal(error.to_string()))?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &id);
+
+        let prompt = p.initial_prompt.filter(|prompt| !prompt.is_empty());
+        if kind == homie_proto::AgentKind::CLAUDE_CODE_ID || prompt.is_some() {
+            let registry = Arc::clone(&self.registry);
+            let session_id = id.clone();
+            std::thread::spawn(move || {
+                prepare_agent_input(
+                    &registry,
+                    &session_id,
+                    kind == homie_proto::AgentKind::CLAUDE_CODE_ID,
+                    prompt.as_deref(),
+                );
+            });
+        }
+        let record = registry
+            .records()
+            .into_iter()
+            .find(|record| record.id.0 == id)
+            .ok_or_else(|| ControlError::internal("the new remote session vanished"))?;
+        serde_json::to_value(&record).map_err(|error| ControlError::internal(error.to_string()))
+    }
+
+    /// `test.run` / `browser.act`: the Playwright sidecar, launched lazily.
+    pub(super) fn browser_call(
+        &self,
+        method: &str,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let params = params.ok_or_else(|| ControlError::bad_request("params are required"))?;
+        let pool = self
+            .browser
+            .get_or_init(|| crate::browser::BrowserPool::new(&self.logs_dir));
+        let result = if method == "run" {
+            pool.run(params)
+        } else {
+            pool.browse(params)
+        };
+        result.map_err(|error| ControlError {
+            code: "browser_pool".into(),
+            message: error,
+        })
+    }
+
+    /// The aggregated staleness view: every worktree of every project,
+    /// joined with the session (live wins) occupying it, its dirtiness,
+    /// merged-ness into the default branch, and age — plus the "safe to
+    /// clean up" suggestion.
+    pub(super) fn worktree_overview(&self) -> Result<JsonValue, ControlError> {
+        let (records, mut roots) = {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            let roots: Vec<String> = registry
+                .projects_raw()
+                .iter()
+                .filter_map(|project| project.get("root").and_then(|value| value.as_str()))
+                .map(str::to_string)
+                .collect();
+            (registry.records(), roots)
+        };
+        roots.sort();
+
+        // Join sessions by worktree path (fallback cwd); a live session wins
+        // over an exited one sharing the path.
+        let mut session_by_path: std::collections::HashMap<String, &homie_proto::SessionRecord> =
+            std::collections::HashMap::new();
+        let running = |record: &homie_proto::SessionRecord| {
+            !matches!(
+                record.status,
+                homie_proto::SessionStatus::Exited(_) | homie_proto::SessionStatus::Unknown
+            )
+        };
+        for record in &records {
+            let path = record
+                .worktree_path
+                .clone()
+                .unwrap_or_else(|| record.cwd.clone());
+            match session_by_path.get(&path) {
+                Some(existing) if running(existing) || !running(record) => {}
+                _ => {
+                    session_by_path.insert(path, record);
+                }
+            }
+        }
+
+        let run_git = |args: &[&str], dir: &str| -> Option<String> {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env("LC_ALL", "C")
+                .env("LANG", "C")
+                .env("LANGUAGE", "C")
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .ok()?;
+            output
+                .status
+                .success()
+                .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        };
+
+        let mut entries = Vec::new();
+        let mut seen_paths = std::collections::HashSet::new();
+        for root in roots {
+            if !crate::git::is_repository(Path::new(&root)) {
+                continue;
+            }
+            let Ok(worktrees) = crate::git::list_worktrees(Path::new(&root)) else {
+                continue;
+            };
+            // Repo's default branch: origin/HEAD symbolic ref, else "main".
+            let default_branch = run_git(
+                &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                &root,
+            )
+            .and_then(|full| full.rsplit('/').next().map(str::to_string))
+            .filter(|short| !short.is_empty())
+            .unwrap_or_else(|| "main".into());
+            let merged_branches: std::collections::HashSet<String> = run_git(
+                &[
+                    "branch",
+                    "--merged",
+                    &default_branch,
+                    "--format=%(refname:short)",
+                ],
+                &root,
+            )
+            .map(|output| output.lines().map(str::to_string).collect())
+            .unwrap_or_default();
+
+            for worktree in worktrees {
+                if worktree.is_bare || !seen_paths.insert(worktree.path.clone()) {
+                    continue;
+                }
+                let is_main = worktree.path == root;
+                let dirty = run_git(&["status", "--porcelain"], &worktree.path)
+                    .is_some_and(|output| !output.is_empty());
+                let merged = worktree.branch.as_ref().is_some_and(|branch| {
+                    branch != &default_branch && merged_branches.contains(branch)
+                });
+                let age_days = std::fs::metadata(&worktree.path)
+                    .ok()
+                    .and_then(|meta| meta.created().or_else(|_| meta.modified()).ok())
+                    .and_then(|at| at.elapsed().ok())
+                    .map(|elapsed| (elapsed.as_secs() / 86_400) as i64)
+                    .unwrap_or(0);
+                let record = session_by_path.get(&worktree.path);
+                let session_alive = record.is_some_and(|record| running(record));
+                entries.push(homie_proto::WorktreeOverviewEntry {
+                    path: worktree.path.clone(),
+                    branch: worktree.branch.clone(),
+                    project_root: root.clone(),
+                    session_id: record.map(|record| record.id.clone()),
+                    session_status: record.map(|record| record.status.clone()),
+                    dirty,
+                    merged,
+                    age_days,
+                    stale_suggestion: !is_main
+                        && !session_alive
+                        && merged
+                        && !dirty
+                        && age_days > 7,
+                });
+            }
+        }
+        encode(&homie_proto::WorktreeOverviewResult { entries })
+    }
+
+    /// One-click handoff of a live Claude session between hosts: WIP commit
+    /// plus push plus hard-sync of the target checkout (phase 1, retryable),
+    /// stop the source, shuttle the transcript, rewrite the record in place,
+    /// and revive on the target through the normal resume path.
+    pub(super) fn session_migrate(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionMigrateParams = decode(params)?;
+        let id = p.session_id.0.clone();
+        let record = {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            registry
+                .records()
+                .into_iter()
+                .find(|record| record.id.0 == id)
+                .ok_or_else(|| ControlError::not_found(id.clone()))?
+        };
+        // Handoff needs no terminal multiplexer of its own. Its phases are
+        // git preparation over `hosts::run_shell`, stopping the source through
+        // the session's own transport (which signals the remote Agent via its
+        // Holder), the transcript shuttle, and a normal resume on the target.
+        // Refuse only when a leg is remote and no Helper transport exists to
+        // carry it, rather than refusing every call.
+        if (record.host.is_some() || p.target_host.is_some()) && self.remote.is_none() {
+            return Err(crate::remote::transport_unavailable());
+        }
+        if record.kind.id() != homie_proto::AgentKind::CLAUDE_CODE_ID {
+            return Err(ControlError::bad_request(
+                "only Claude Code sessions can move between hosts",
+            ));
+        }
+        if record.host == p.target_host {
+            return Err(ControlError::bad_request(match &p.target_host {
+                Some(host) => format!("session is already on {host}"),
+                None => "session is already local".to_string(),
+            }));
+        }
+        let source_host = record
+            .host
+            .as_deref()
+            .map(|host| self.resolve_host(host))
+            .transpose()?;
+        let target_host = p
+            .target_host
+            .as_deref()
+            .map(|host| self.resolve_host(host))
+            .transpose()?;
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .map_err(|_| ControlError::internal("HOME is not set"))?;
+
+        // Locate the target checkout by origin (shared with host.locate_repo).
+        let origin =
+            crate::hosts::origin_of_cwd(&record.cwd, source_host.as_ref()).ok_or_else(|| {
+                ControlError::bad_request(format!(
+                    "session cwd is not inside a git repository with an 'origin' remote: {}",
+                    record.cwd
+                ))
+            })?;
+        let local_roots: Vec<String> = {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            registry
+                .projects_raw()
+                .iter()
+                .filter_map(|project| project.get("root").and_then(|value| value.as_str()))
+                .map(str::to_string)
+                .collect()
+        };
+        let target_repo = crate::hosts::locate(&origin, target_host.as_ref(), &local_roots)
+            .ok_or_else(|| match &target_host {
+                Some(host) => ControlError::bad_request(format!(
+                    "repo not cloned on {} — clone {origin} under {} first",
+                    host.display_name(),
+                    host.default_cwd.as_deref().unwrap_or("~")
+                )),
+                None => ControlError::bad_request(format!(
+                    "repo not cloned locally — no known project has origin {origin}"
+                )),
+            })?;
+
+        // Phase 1 (source agent still alive, everything retryable).
+        let prepared = crate::migrate::prepare(
+            &record.cwd,
+            source_host.as_ref(),
+            target_host.as_ref(),
+            &target_repo,
+            target_host
+                .as_ref()
+                .map(|host| host.display_name())
+                .unwrap_or("local"),
+        )
+        .map_err(migrate_control_error)?;
+
+        // Point of no return: stop the source agent.
+        let mut warnings: Vec<String> = Vec::new();
+        {
+            let mut registry = self.registry.lock().map_err(poisoned)?;
+            let _ = registry.terminate(&id, std::time::Duration::from_secs(3));
+        }
+        // Phase 2: transcript shuttle (source stopped ⇒ the jsonl is final).
+        let shuttle = crate::migrate::shuttle_transcript(
+            &record.cwd,
+            record.transcript_path.as_deref(),
+            record.agent_session_id.as_deref(),
+            source_host.as_ref(),
+            target_host.as_ref(),
+            &prepared,
+            &home,
+        );
+        if let Some(warning) = shuttle.warning.clone() {
+            warnings.push(warning);
+        }
+
+        // Rewrite the record in place: same id/title/sidebar position, new
+        // host + cwd.
+        {
+            let mut registry = self.registry.lock().map_err(poisoned)?;
+            let target_id = target_host.as_ref().map(|host| host.id.clone());
+            let branch = prepared.branch.clone();
+            let cwd = prepared.target_repo_root.clone();
+            let transcript = shuttle.local_target_path.clone();
+            let local = target_host.is_none();
+            registry.ensure_session_project(&cwd, target_id.as_deref());
+            registry.update_record(&id, |record| {
+                record.host = target_id;
+                record.cwd = cwd;
+                record.project_id =
+                    crate::registry::session_project_id(&record.cwd, record.host.as_deref());
+                record.worktree_path = None;
+                record.git_branch = Some(branch);
+                record.transcript_path = if local { transcript } else { None };
+                record.status = homie_proto::SessionStatus::Exited(homie_proto::ExitInfo {
+                    reason: homie_proto::ExitReason::Exited,
+                    code: Some(0),
+                    signal: None,
+                });
+                record.needs_input = None;
+                record.hibernation = None;
+                record.memory_bytes = None;
+                record.listening_ports = None;
+                record.resumability = homie_proto::Resumability::Resumable;
+            });
+            let _ = registry.persist();
+            self.publish_updated(&registry, &id);
+        }
+
+        // Cutover: the normal resume path revives the conversation on the
+        // target; without a transcript there is nothing to resume, so the
+        // record is left revivable and the client's next open resumes fresh.
+        let revived = self.session_resume(Some(json!({ "sessionID": id })))?;
+        let session: homie_proto::SessionRecord = serde_json::from_value(revived)
+            .map_err(|error| ControlError::internal(error.to_string()))?;
+        encode(&homie_proto::SessionMigrateResult {
+            session,
+            transcript_migrated: shuttle.migrated,
+            warning: (!warnings.is_empty()).then(|| warnings.join("; ")),
+        })
+    }
+
+    /// `host.sync_prefs`: push the local agent preferences to a host so
+    /// agents there behave like local ones. Additive rsync, fixed include
+    /// list, per-tool reporting.
+    pub(super) fn host_sync_prefs(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::HostSyncPrefsParams = decode(params)?;
+        let entry = self.resolve_host(&p.host)?;
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .map_err(|_| ControlError::internal("HOME is not set"))?;
+        encode(&crate::hosts::sync_prefs(&entry, &home))
+    }
+
+    /// `host.initialize`: run the complete idempotent SSH bootstrap before a
+    /// user creates the first session. No environment values cross back into
+    /// the app; only facts suitable for a visible readiness summary do.
+    pub(super) fn host_initialize(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::HostInitializeParams = decode(params)?;
+        let manager = self
+            .remote
+            .as_ref()
+            .ok_or_else(crate::remote::transport_unavailable)?;
+        let host = self.resolve_host(&p.host)?;
+        let helper = if p.force_reinstall {
+            manager.reinstall_helper(&host)
+        } else {
+            manager.ensure_helper(&host)
+        }
+        .map_err(io_control_error)?;
+        let persistence = manager
+            .probe_persistence(&host, &helper)
+            .map_err(io_control_error)?;
+        let captured = manager
+            .capture_environment(
+                &helper,
+                &homie_proto::remote_pty::EnvironmentCaptureRequest {
+                    cwd: Some(host.default_cwd.clone().unwrap_or_else(|| "~".into())),
+                    timeout_millis: 10_000,
+                },
+            )
+            .map_err(io_control_error)?;
+        encode(&homie_proto::HostInitializeResult {
+            helper_build_id: helper.build_id,
+            protocol: helper.protocol,
+            persistence,
+            cwd: captured.cwd,
+            shell: captured.shell,
+        })
+    }
+
+    /// `host.list_directories`: one shallow, bounded filesystem read on the
+    /// requested execution machine. Remote work stays behind the Engine and
+    /// uses the verified Helper over `ssh -T`; the app never executes SSH.
+    pub(super) fn host_list_directories(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::HostListDirectoriesParams = decode(params)?;
+        let request = homie_proto::remote_pty::DirectoryListRequest { path: p.path };
+        let result = if let Some(host_id) = p.host {
+            let manager = self
+                .remote
+                .as_ref()
+                .ok_or_else(crate::remote::transport_unavailable)?;
+            let host = self.resolve_host(&host_id)?;
+            manager
+                .list_directories(&host, &request)
+                .map_err(io_control_error)?
+        } else {
+            crate::directories::list(&request).map_err(io_control_error)?
+        };
+        encode(&result)
+    }
+
+    /// `host.locate_repo`: find a checkout by origin URL (given directly, or
+    /// derived from a session's cwd + host).
+    pub(super) fn host_locate_repo(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::HostLocateRepoParams = decode(params)?;
+        let target = p
+            .host
+            .as_deref()
+            .map(|id| self.resolve_host(id))
+            .transpose()?;
+
+        let mut origin = p.origin_url.clone();
+        if origin.is_none()
+            && let Some(session_id) = &p.session_id
+        {
+            let (cwd, source_host) = {
+                let registry = self.registry.lock().map_err(poisoned)?;
+                let record = registry
+                    .records()
+                    .into_iter()
+                    .find(|record| record.id.0 == session_id.0)
+                    .ok_or_else(|| ControlError::not_found(session_id.0.clone()))?;
+                (record.cwd, record.host)
+            };
+            let source = source_host
+                .as_deref()
+                .map(|id| self.resolve_host(id))
+                .transpose()?;
+            origin = crate::hosts::origin_of_cwd(&cwd, source.as_ref());
+        }
+        let Some(origin) = origin else {
+            return encode(&homie_proto::HostLocateRepoResult {
+                path: None,
+                origin_url: None,
+            });
+        };
+
+        let local_roots: Vec<String> = {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            registry
+                .projects_raw()
+                .iter()
+                .filter_map(|project| project.get("root").and_then(|value| value.as_str()))
+                .map(str::to_string)
+                .collect()
+        };
+        let path = crate::hosts::locate(&origin, target.as_ref(), &local_roots);
+        encode(&homie_proto::HostLocateRepoResult {
+            path,
+            origin_url: Some(origin),
+        })
+    }
+
+    /// Resolves a host id against `hosts.json`, read fresh each call so
+    /// Settings edits apply without a daemon restart.
+    pub(super) fn resolve_host(
+        &self,
+        host_id: &str,
+    ) -> Result<homie_proto::HostEntry, ControlError> {
+        homie_proto::HostsConfig::load(self.hosts_file())
+            .hosts
+            .into_iter()
+            .find(|entry| entry.id == host_id)
+            .ok_or_else(|| {
+                ControlError::bad_request(format!("unknown host {host_id:?}; check hosts.json"))
+            })
+    }
+
+    /// Applies the current application build's remote environment gate before
+    /// a stateless SSH action. Live Holder operations deliberately use their
+    /// session binding's creation-time Helper instead.
+    pub(super) fn hosts_file(&self) -> PathBuf {
+        self.socket_path
+            .parent()
+            .map(|parent| parent.join("hosts.json"))
+            .unwrap_or_else(|| PathBuf::from("hosts.json"))
+    }
+
+    /// `session.list` and `state.snapshot` are the same view: every record
+    /// plus the project list, exactly as the reference implementation answers them.
+    pub(super) fn session_list(&self) -> Result<JsonValue, ControlError> {
+        let registry = self.registry.lock().map_err(poisoned)?;
+        serde_json::to_value(json!({
+            "sessions": registry.records(),
+            "projects": registry.projects_raw(),
+        }))
+        .map_err(|error| ControlError::internal(error.to_string()))
+    }
+
+    pub(super) fn session_send_text(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SendTextParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        // Typing into a hibernated session wakes it; the text is queued and
+        // flushed after SIGCONT, so no keystroke is lost.
+        let _ = registry.wake_session(&p.session_id.0);
+        self.publish_updated(&registry, &p.session_id.0);
+        let session = registry
+            .get(&p.session_id.0)
+            .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?;
+        session
+            .send_text(&p.text, p.submit)
+            .map_err(|error| ControlError::internal(error.to_string()))?;
+        Ok(json!({}))
+    }
+
+    pub(super) fn session_resize(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::ResizeParams = decode(params)?;
+        let cols = u16::try_from(p.cols.clamp(2, u16::MAX as i64)).expect("clamped");
+        let rows = u16::try_from(p.rows.clamp(2, u16::MAX as i64)).expect("clamped");
+        let registry = self.registry.lock().map_err(poisoned)?;
+        let session = registry
+            .get(&p.session_id.0)
+            .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?;
+        session
+            .resize(cols, rows)
+            .map_err(|error| ControlError::internal(error.to_string()))?;
+        Ok(json!({}))
+    }
+
+    pub(super) fn session_read_screen(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let registry = self.registry.lock().map_err(poisoned)?;
+        let session = registry
+            .get(&p.session_id.0)
+            .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?;
+        let (cols, rows) = session.screen_size();
+        encode(&homie_proto::ReadScreenResult {
+            text: session.screen_lines().join("\n"),
+            cols: cols as i64,
+            rows: rows as i64,
+        })
+    }
+
+    pub(super) fn session_read_scrollback(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let registry = self.registry.lock().map_err(poisoned)?;
+        let session = registry
+            .get(&p.session_id.0)
+            .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?;
+        encode(&session.read_scrollback())
+    }
+
+    pub(super) fn session_read_scrollback_cells(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::ReadScrollbackCellsParams = decode(params)?;
+        let registry = self.registry.lock().map_err(poisoned)?;
+        let session = registry
+            .get(&p.session_id.0)
+            .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?;
+        encode(&session.read_scrollback_cells(p.first_row, p.max_rows))
+    }
+
+    pub(super) fn session_kill(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        let exit = registry
+            .terminate(&p.session_id.0, std::time::Duration::from_secs(3))
+            .map_err(|error| ControlError::internal(error.to_string()))?;
+        if exit.is_none() {
+            return Err(ControlError::not_found(p.session_id.0.clone()));
+        }
+        let _ = registry.persist();
+        if let Some(store) = &self.remote_bindings {
+            let _ = store.remove(&p.session_id.0);
+        }
+        self.publish_updated(&registry, &p.session_id.0);
+        Ok(json!({}))
+    }
+
+    pub(super) fn session_remove(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        registry
+            .remove(&p.session_id.0, &self.logs_dir)
+            .map_err(io_control_error)?;
+        let _ = registry.persist();
+        if let Some(store) = &self.remote_bindings {
+            let _ = store.remove(&p.session_id.0);
+        }
+        self.events.publish(
+            homie_proto::EventName::SESSION_REMOVED,
+            json!({ "id": p.session_id.0, "reason": "released" }),
+            Some(&p.session_id.0),
+        );
+        Ok(json!({}))
+    }
+
+    pub(super) fn session_rename(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionRenameParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        registry
+            .rename(&p.session_id.0, &p.title)
+            .map_err(io_control_error)?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &p.session_id.0);
+        Ok(json!({}))
+    }
+
+    pub(super) fn session_mark_seen(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        registry
+            .mark_seen(&p.session_id.0)
+            .map_err(io_control_error)?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &p.session_id.0);
+        self.pr_monitor_wake.wake_session(p.session_id.0);
+        Ok(json!({}))
+    }
+
+    pub(super) fn client_set_active(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::ClientActiveParams = decode(params)?;
+        self.pr_monitor_wake.set_foreground_active(p.active);
+        Ok(json!({}))
+    }
+
+    pub(super) fn session_archive(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        registry
+            .archive(&p.session_id.0)
+            .map_err(io_control_error)?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &p.session_id.0);
+        Ok(json!({}))
+    }
+
+    pub(super) fn session_unarchive(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        registry
+            .unarchive(&p.session_id.0)
+            .map_err(io_control_error)?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &p.session_id.0);
+        Ok(json!({}))
+    }
+
+    /// A hook or notify callback from inside an agent session: the signal
+    /// that makes hook-authority agents' status precise. Parsed by the same
+    /// rules the reference implementation used, metadata folded into the record, signal
+    /// fed to the session's reducer.
+    pub(super) fn hook_report(&self, params: Option<JsonValue>) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::HookReportParams = decode(params)?;
+        let Some(session_id) = p.homie_session_id else {
+            return Ok(json!({}));
+        };
+        let parsed = match p.kind.as_str() {
+            "claude-hook" => p.event.as_deref().and_then(|event| {
+                crate::hooks::parse_claude_hook(event, &p.payload, std::time::SystemTime::now())
+            }),
+            "codex-notify" => crate::hooks::parse_codex_notify(&p.payload),
+            _ => None,
+        };
+        let Some((signal, meta)) = parsed else {
+            return Ok(json!({}));
+        };
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        let changed = registry.apply_hook_metadata(&session_id.0, &meta);
+        if let Some(session) = registry.get(&session_id.0) {
+            session.feed_signal(signal);
+        }
+        if changed {
+            let _ = registry.persist();
+        }
+        self.publish_updated(&registry, &session_id.0);
+        Ok(json!({}))
+    }
+
+    /// Revives an exited session's conversation under the SAME record id.
+    pub(super) fn session_resume(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let record = {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            let record = registry
+                .records()
+                .into_iter()
+                .find(|record| record.id.0 == p.session_id.0)
+                .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?;
+            // Presence in the registry is not liveness: only an explicit kill
+            // removes a session, so an agent that died on its own is still in
+            // the map. Returning here on presence alone would hand back the
+            // corpse this call was asked to revive; the exited case falls
+            // through to the eviction path below.
+            if registry.get(&p.session_id.0).is_some()
+                && !matches!(record.status, homie_proto::SessionStatus::Exited(_))
+            {
+                // Genuinely live: resuming is a no-op, not an error.
+                return serde_json::to_value(&record)
+                    .map_err(|error| ControlError::internal(error.to_string()));
+            }
+            record
+        };
+        let spec = if record.host.is_some() {
+            self.remote_resume_spec(&record)?
+        } else {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            self.resume_spec(
+                &registry,
+                &record.id.0,
+                record.kind.id(),
+                &record.cwd,
+                record.agent_session_id.as_deref(),
+            )?
+        };
+        let remote_persistence = spec.remote.as_ref().map(|remote| remote.launch.persistence);
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        let record = registry
+            .records()
+            .into_iter()
+            .find(|record| record.id.0 == p.session_id.0)
+            .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?;
+        let exited = matches!(record.status, homie_proto::SessionStatus::Exited(_));
+        if registry.get(&p.session_id.0).is_some() {
+            if !exited {
+                // Already live: resuming is a no-op, not an error.
+                return serde_json::to_value(&record)
+                    .map_err(|error| ControlError::internal(error.to_string()));
+            }
+            // An agent that died on its own leaves its session behind: only an
+            // explicit kill takes one out of the registry, so presence alone
+            // does not mean alive. Evicting the corpse — which also releases
+            // the holder still owning this id — is what keeps resume from
+            // silently handing back the dead record it was asked to revive.
+            let _ = registry.terminate(&p.session_id.0, std::time::Duration::from_millis(500));
+        }
+        registry
+            .respawn(spec)
+            .map_err(|error| ControlError::internal(error.to_string()))?;
+        if let Some(persistence) = remote_persistence {
+            registry.update_record(&p.session_id.0, |record| {
+                record.remote_persistence = Some(persistence);
+            });
+        }
+        let _ = registry.persist();
+        self.publish_updated(&registry, &p.session_id.0);
+        let record = registry
+            .records()
+            .into_iter()
+            .find(|record| record.id.0 == p.session_id.0)
+            .ok_or_else(|| ControlError::internal("the resumed session vanished"))?;
+        serde_json::to_value(&record).map_err(|error| ControlError::internal(error.to_string()))
+    }
+
+    pub(super) fn remote_resume_spec(
+        &self,
+        record: &homie_proto::SessionRecord,
+    ) -> Result<crate::session::SessionSpec, ControlError> {
+        let manager = self
+            .remote
+            .as_ref()
+            .cloned()
+            .ok_or_else(crate::remote::transport_unavailable)?;
+        let binding_store = self.remote_bindings.clone().ok_or_else(|| {
+            ControlError::internal("owner-only remote binding store is unavailable")
+        })?;
+        let host_id = record
+            .host
+            .as_deref()
+            .ok_or_else(|| ControlError::bad_request("remote record has no host"))?;
+        let host = self.resolve_host(host_id)?;
+        let helper = manager.ensure_helper(&host).map_err(io_control_error)?;
+        let persistence = manager
+            .probe_persistence(&host, &helper)
+            .map_err(io_control_error)?;
+        let captured = manager
+            .capture_environment(
+                &helper,
+                &homie_proto::remote_pty::EnvironmentCaptureRequest {
+                    cwd: Some(record.cwd.clone()),
+                    timeout_millis: 10_000,
+                },
+            )
+            .map_err(io_control_error)?;
+        let cwd = PathBuf::from(&captured.cwd);
+        if !cwd.is_absolute() {
+            return Err(ControlError::internal(
+                "remote Helper returned a non-absolute cwd",
+            ));
+        }
+        let (descriptor, authority) = {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            let engine = registry.engine();
+            let manifest = engine.manifest(record.kind.id()).ok_or_else(|| {
+                ControlError::not_found(format!("no manifest for agent {}", record.kind.id()))
+            })?;
+            let descriptor = manifest.agent.clone().unwrap_or_default();
+            let authority = descriptor.authority();
+            (descriptor, authority)
+        };
+        let mut launch_args = descriptor.spawn_args.clone();
+        launch_args.extend(
+            descriptor
+                .resume_args(record.agent_session_id.as_deref())
+                .ok_or_else(|| {
+                    ControlError::bad_request(format!(
+                        "agent {} does not support resume",
+                        record.kind.id()
+                    ))
+                })?,
+        );
+        let inherited = captured
+            .environment
+            .into_iter()
+            .map(|variable| (variable.name, variable.value));
+        let pty = descriptor
+            .remote_spawn_spec(&cwd, inherited, &launch_args)
+            .ok_or_else(|| {
+                ControlError::bad_request(format!("agent {} declares no binary", record.kind.id()))
+            })?;
+        let launch = homie_proto::remote_pty::LaunchRequest {
+            session_id: record.id.0.clone(),
+            session_token: random_session_token()?,
+            argv: pty.argv.clone(),
+            cwd: captured.cwd,
+            environment: pty
+                .env
+                .iter()
+                .map(
+                    |(name, value)| homie_proto::remote_pty::EnvironmentVariable {
+                        name: name.clone(),
+                        value: value.clone(),
+                    },
+                )
+                .collect(),
+            cols: pty.cols,
+            rows: pty.rows,
+            persistence,
+        };
+        Ok(crate::session::SessionSpec {
+            id: record.id.0.clone(),
+            pty,
+            manifest_id: record.kind.id().to_string(),
+            authority,
+            logs_dir: self.logs_dir.clone(),
+            holder: None,
+            remote: Some(crate::session::RemoteSessionSpec {
+                manager,
+                helper,
+                launch,
+                host_id: host.id,
+                binding_store,
+            }),
+            defer_launch: false,
+        })
+    }
+
+    /// Revives a conversation found in an agent's own history: a NEW record
+    /// whose agent-side id is the transcript's.
+    pub(super) fn session_resume_from_history(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::ResumeFromHistoryParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        let id = next_session_id();
+        let kind = p.entry.kind.id().to_string();
+        let mut record = new_record(&id, &kind, &p.entry.cwd);
+        record.agent_session_id = Some(p.entry.id.clone());
+        record.transcript_path = Some(p.entry.transcript_path.clone());
+        if let Some(title) = &p.entry.title {
+            record.title = title.clone();
+            record.title_source = homie_proto::TitleSource::FirstPrompt;
+        }
+        let spec = self.resume_spec(&registry, &id, &kind, &p.entry.cwd, Some(&p.entry.id))?;
+        registry.ensure_session_project(&p.entry.cwd, None);
+        registry
+            .spawn(spec, record)
+            .map_err(|error| ControlError::internal(error.to_string()))?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &id);
+        let record = registry
+            .records()
+            .into_iter()
+            .find(|record| record.id.0 == id)
+            .ok_or_else(|| ControlError::internal("the resumed session vanished"))?;
+        serde_json::to_value(&record).map_err(|error| ControlError::internal(error.to_string()))
+    }
+
+    /// The spawn spec that re-enters a conversation: the manifest's resume
+    /// argv plus the same hook/MCP wiring a fresh spawn gets — a resumed
+    /// Claude must not silently lose status detection or the homie tools.
+    pub(super) fn resume_spec(
+        &self,
+        registry: &Registry,
+        id: &str,
+        kind: &str,
+        cwd: &str,
+        agent_session_id: Option<&str>,
+    ) -> Result<crate::session::SessionSpec, ControlError> {
+        let engine = registry.engine();
+        let manifest = engine
+            .manifest(kind)
+            .ok_or_else(|| ControlError::not_found(format!("no manifest for agent {kind}")))?;
+        let descriptor = manifest.agent.clone().unwrap_or_default();
+        descriptor
+            .binary
+            .as_ref()
+            .ok_or_else(|| ControlError::bad_request(format!("agent {kind} declares no binary")))?;
+        let tail = descriptor.resume_args(agent_session_id).ok_or_else(|| {
+            ControlError::bad_request(format!("agent {kind} does not support resume"))
+        })?;
+
+        let mut launch_args = descriptor.spawn_args.clone();
+        launch_args.extend(tail);
+        if let Some(injection) = &self.injection {
+            // Only the appendable flag mechanisms replay on resume, exactly
+            // as in Swift: Codex's global `-c` overrides must precede the
+            // resume SUBCOMMAND and are deliberately not replayed.
+            let claude_only = crate::agent::InjectionSpec {
+                claude_hooks: descriptor.injection.claude_hooks,
+                claude_mcp: descriptor.injection.claude_mcp,
+                ..Default::default()
+            };
+            launch_args.extend(crate::inject::injection_args(
+                &claude_only,
+                &injection.inject_dir,
+                &injection.cli_path,
+            ));
+        }
+
+        let inherited: Vec<(String, String)> = std::env::vars().collect();
+        let mut pty = descriptor
+            .spawn_spec(Path::new(cwd), inherited, &launch_args)
+            .ok_or_else(|| ControlError::internal("resume spec without a binary"))?;
+        if let Some(injection) = &self.injection {
+            pty.env
+                .push((crate::inject::SESSION_ID_ENV.into(), id.to_string()));
+            pty.env.push((
+                crate::inject::SOCKET_ENV.into(),
+                self.socket_path.to_string_lossy().into_owned(),
+            ));
+            pty.env.push((
+                crate::inject::CLI_ENV.into(),
+                injection.cli_path.to_string_lossy().into_owned(),
+            ));
+        }
+        Ok(crate::session::SessionSpec {
+            id: id.to_string(),
+            pty,
+            manifest_id: kind.to_string(),
+            authority: descriptor.authority(),
+            logs_dir: self.logs_dir.clone(),
+            holder: self.holder.clone(),
+            remote: None,
+            defer_launch: true,
+        })
+    }
+
+    /// Pops the most recently closed session whose folder still exists and
+    /// re-lists it (exited), ready for the resume path.
+    pub(super) fn session_reopen_last(&self) -> Result<JsonValue, ControlError> {
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        let record = registry
+            .reopen_last_closed()
+            .ok_or_else(|| ControlError::bad_request("no recently closed session"))?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &record.id.0);
+        serde_json::to_value(&record).map_err(|error| ControlError::internal(error.to_string()))
+    }
+
+    /// Which agent binaries actually resolve, plus each manifest's descriptor
+    /// — this doubles as the agent catalog the client's picker renders.
+    pub(super) fn agent_readiness(&self) -> Result<JsonValue, ControlError> {
+        let registry = self.registry.lock().map_err(poisoned)?;
+        let engine = registry.engine();
+        let mut agents = Vec::new();
+        for id in engine.ids() {
+            let Some(manifest) = engine.manifest(id) else {
+                continue;
+            };
+            let Some(descriptor) = &manifest.agent else {
+                continue;
+            };
+            let Some(binary) = &descriptor.binary else {
+                continue;
+            };
+            agents.push(json!({
+                "kind": id,
+                "binary": binary,
+                "path": resolve_on_path(binary),
+                "descriptor": engine.raw_agent(id),
+            }));
+        }
+        Ok(json!({ "agents": agents }))
+    }
+
+    pub(super) fn environment_refresh_path(&self) -> Result<JsonValue, ControlError> {
+        let app_support = self
+            .socket_path
+            .parent()
+            .ok_or_else(|| ControlError::internal("daemon socket has no parent directory"))?;
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+        let outcome = crate::environment::refresh_path(app_support, &shell, Duration::from_secs(2))
+            .map_err(|error| ControlError::internal(format!("path refresh failed: {error}")))?;
+        Ok(json!({
+            "path": outcome.path,
+            "updated": matches!(outcome.status, crate::environment::RefreshStatus::Updated),
+        }))
+    }
+
+    pub(super) fn project_add(&self, params: Option<JsonValue>) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::ProjectAddParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        let project = registry.add_project(&p.root);
+        let _ = registry.persist();
+        Ok(project)
+    }
+
+    /// The working tree's diff against a base ref, for the app's diff pane.
+    pub(super) fn session_read_diff(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionReadDiffParams = decode(params)?;
+        let (cwd, host_id) = {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            registry
+                .records()
+                .into_iter()
+                .find(|record| record.id.0 == p.session_id.0)
+                .map(|record| (record.cwd, record.host))
+                .ok_or_else(|| ControlError::not_found(p.session_id.0.clone()))?
+        };
+        let result = if let Some(host_id) = host_id {
+            let manager = self
+                .remote
+                .as_ref()
+                .ok_or_else(crate::remote::transport_unavailable)?;
+            let host = self.resolve_host(&host_id)?;
+            crate::git::working_diff_remote(manager, &host, &cwd, p.base.as_ref())
+                .map_err(io_control_error)?
+        } else {
+            crate::git::working_diff(Path::new(&cwd), p.base.as_ref()).map_err(io_control_error)?
+        };
+        encode(&result)
+    }
+
+    /// SIGSTOPs the session's whole tree and records it as hibernated. The
+    /// PTY and holder stay alive; wake is one SIGCONT away.
+    /// Updates the two governor tunables the app exposes; the rest keep the
+    /// Swift defaults. Applies on the governor's next sweep.
+    pub(super) fn governor_configure(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::GovernorSettingsParams = decode(params)?;
+        let mut config = self.governor.lock().map_err(poisoned)?;
+        config.idle_threshold_seconds = p.idle_threshold_seconds.max(0.0);
+        config.hard_memory_bytes = p.hard_memory_bytes;
+        Ok(json!({}))
+    }
+
+    pub(super) fn session_hibernate(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        registry
+            .hibernate(&p.session_id.0, homie_proto::HibernationReason::Manual)
+            .map_err(io_control_error)?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &p.session_id.0);
+        Ok(json!({}))
+    }
+
+    pub(super) fn session_wake(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::SessionIdParams = decode(params)?;
+        let mut registry = self.registry.lock().map_err(poisoned)?;
+        registry
+            .wake_session(&p.session_id.0)
+            .map_err(|error| ControlError::internal(error.to_string()))?;
+        let _ = registry.persist();
+        self.publish_updated(&registry, &p.session_id.0);
+        Ok(json!({}))
+    }
+
+    /// Publishes `session.updated` with the session's current record.
+    pub(super) fn publish_updated(&self, registry: &Registry, id: &str) {
+        if let Some(record) = registry
+            .records()
+            .into_iter()
+            .find(|record| record.id.0 == id)
+        {
+            self.events
+                .publish_encoded(homie_proto::EventName::SESSION_UPDATED, &record, Some(id));
+        }
+    }
+
+    /// Resumable past conversations from the agents' own transcript stores,
+    /// excluding ones already represented by live records.
+    pub(super) fn session_history(&self) -> Result<JsonValue, ControlError> {
+        let tracked = {
+            let registry = self.registry.lock().map_err(poisoned)?;
+            registry.tracked_agent_session_ids()
+        };
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .map_err(|_| ControlError::internal("HOME is not set"))?;
+        let entries: Vec<homie_proto::HistoryEntry> = crate::history::scan(&home, &tracked)
+            .into_iter()
+            .map(history_entry_to_wire)
+            .collect();
+        encode(&homie_proto::SessionHistoryResult { entries })
+    }
+
+    pub(super) fn worktree_create(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::WorktreeCreateParams = decode(params)?;
+        let info = crate::git::create_worktree(
+            Path::new(&p.repo_path),
+            p.branch.as_deref(),
+            p.base.as_deref(),
+        )
+        .map_err(io_control_error)?;
+        self.events.publish(
+            "worktree.created",
+            json!({ "repoPath": p.repo_path, "path": info.path, "branch": info.branch }),
+            None,
+        );
+        encode(&worktree_to_wire(info))
+    }
+
+    pub(super) fn worktree_list(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::WorktreeListParams = decode(params)?;
+        let list = crate::git::list_worktrees(Path::new(&p.repo_path)).map_err(io_control_error)?;
+        encode(&list.into_iter().map(worktree_to_wire).collect::<Vec<_>>())
+    }
+
+    pub(super) fn worktree_remove(
+        &self,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, ControlError> {
+        let p: homie_proto::WorktreeRemoveParams = decode(params)?;
+        crate::git::remove_worktree(Path::new(&p.repo_path), &p.worktree_path, p.force)
+            .map_err(io_control_error)?;
+        self.events.publish(
+            "worktree.removed",
+            json!({ "repoPath": p.repo_path, "path": p.worktree_path }),
+            None,
+        );
+        Ok(json!({}))
+    }
+}
+
+fn random_session_token() -> Result<homie_proto::remote_pty::SessionToken, ControlError> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|error| ControlError::internal(format!("secure random source failed: {error}")))?;
+    let encoded = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    homie_proto::remote_pty::SessionToken::new(encoded)
+        .map_err(|error| ControlError::internal(error.to_string()))
+}
+
+pub(crate) fn new_record(id: &str, kind: &str, cwd: &str) -> homie_proto::SessionRecord {
+    use homie_proto::{AgentKind, DateMillis, Resumability, SessionId, TitleSource};
+    let now: DateMillis = std::time::SystemTime::now().into();
+    homie_proto::SessionRecord {
+        id: SessionId(id.to_string()),
+        kind: AgentKind::new(kind),
+        cwd: cwd.to_string(),
+        project_id: crate::registry::session_project_id(cwd, None),
+        worktree_path: None,
+        git_branch: None,
+        title: kind.to_string(),
+        title_source: TitleSource::Placeholder,
+        agent_session_id: None,
+        transcript_path: None,
+        status: homie_proto::SessionStatus::Starting,
+        needs_input: None,
+        resumability: Resumability::Live,
+        parent: None,
+        created_at: now,
+        updated_at: now,
+        last_turn_completed_at: None,
+        last_seen_at: None,
+        pinned: false,
+        archived_at: None,
+        host: None,
+        remote_persistence: None,
+        hibernation: None,
+        memory_bytes: None,
+        artifacts: None,
+        pull_requests: None,
+        listening_ports: None,
+        foreground_agent: None,
+    }
+}
+
+pub(super) fn shell_pty_environment(mut inherited: Vec<(String, String)>) -> Vec<(String, String)> {
+    inherited.retain(|(key, _)| key != "TERM" && key != "NO_COLOR");
+    inherited.push(("TERM".into(), "xterm-256color".into()));
+    inherited
+}
+
+/// Reads one fact about a live session under a short registry lock; `None`
+/// once the session is gone. The injection thread must never hold the lock
+/// across its sleeps.
+fn with_session<T>(
+    registry: &Arc<Mutex<Registry>>,
+    session_id: &str,
+    read: impl FnOnce(&crate::session::Session) -> T,
+) -> Option<T> {
+    registry
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(session_id).map(read))
+}
+
+/// Handles the only startup prompt Homie can safely pre-authorize: the exact
+/// workspace the user just selected for Claude. Current Claude has no launch
+/// flag that skips only workspace trust; its documented bypass flag also
+/// disables every tool permission and is deliberately not used.
+fn prepare_agent_input(
+    registry: &Arc<Mutex<Registry>>,
+    session_id: &str,
+    accept_claude_workspace: bool,
+    prompt: Option<&str>,
+) {
+    if accept_claude_workspace {
+        accept_claude_workspace_trust(registry, session_id);
+    }
+    if let Some(prompt) = prompt {
+        inject_initial_prompt(registry, session_id, prompt);
+    }
+}
+
+/// Answers Claude Code's "do you trust this folder?" picker on the user's
+/// behalf so a spawn does not stall behind it and swallow the initial prompt.
+///
+/// This is a deliberate trade: it auto-grants workspace trust for whatever
+/// directory the session was pointed at. That is defensible when the user
+/// picked the directory in the UI, and weaker when they did not — an
+/// orchestrator spawning into a freshly cloned repository gets trust without
+/// anyone affirming it. The window is bounded (20s, and it stops at the first
+/// non-matching screen), but a session whose own output contains the matched
+/// phrases inside that window would also receive the keystroke.
+fn accept_claude_workspace_trust(registry: &Arc<Mutex<Registry>>, session_id: &str) {
+    for _ in 0..200 {
+        let Some((exited, screen)) = with_session(registry, session_id, |session| {
+            (session.view().exited, session.screen_lines().join("\n"))
+        }) else {
+            return;
+        };
+        if exited {
+            return;
+        }
+        if is_claude_workspace_trust_screen(&screen) {
+            let _ = with_session(registry, session_id, |session| session.send_text("1", true));
+            // Let Claude persist trust and replace the picker before a caller's
+            // initial prompt starts its own readiness/verification loop.
+            for _ in 0..20 {
+                std::thread::sleep(Duration::from_millis(100));
+                let changed = with_session(registry, session_id, |session| {
+                    !is_claude_workspace_trust_screen(&session.screen_lines().join("\n"))
+                })
+                .unwrap_or(true);
+                if changed {
+                    return;
+                }
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+pub(super) fn is_claude_workspace_trust_screen(screen: &str) -> bool {
+    let normalized = screen.to_ascii_lowercase();
+    normalized.contains("yes, i trust this folder")
+        && (normalized.contains("1.") || normalized.contains("1 "))
+}
+
+/// Types an initial prompt into a freshly spawned agent.
+///
+/// The old shape of this — paste-and-Enter in one go, then call it settled
+/// the moment the screen changed at all — lost the prompt outright against
+/// Claude Code: its banner and tips repaint for seconds after bracketed-paste
+/// mode comes on, so the "screen changed" tell fired on a repaint while the
+/// composer had quietly discarded the keystrokes. The user typed a prompt,
+/// got a bare agent, and the prompt was gone.
+///
+/// So the Enter is no longer sent blind, and "it landed" is no longer
+/// inferred from the screen merely moving. Each attempt TYPES the prompt
+/// without submitting and watches for it to echo into the composer; if it
+/// does, the Enter follows a prompt we can see. If it does not — which also
+/// describes a line-mode reader that paints nothing before a newline — the
+/// Enter goes out anyway and the prompt itself must then appear on screen.
+/// Only when neither happens is the attempt treated as swallowed, and only
+/// then is anything retyped.
+///
+/// And it keeps trying. A first-run agent can sit on a trust dialog or a
+/// login for a minute before it has a composer at all (Codex asks whether it
+/// trusts the directory), which the old three-quick-tries shape treated as
+/// "prompt lost". The prompt is held rather than fired: a dialog does not
+/// echo what it is handed, so those attempts simply fail their check and come
+/// back a moment later, and the first attempt after the dialog closes is the
+/// one that lands. Nothing here consults the session's status — Codex reads
+/// as `Working` even at an idle composer, so the echo is the only tell worth
+/// trusting.
+fn inject_initial_prompt(registry: &Arc<Mutex<Registry>>, session_id: &str, prompt: &str) {
+    if !wait_until_ready(registry, session_id) {
+        return;
+    }
+    let give_up_at = Instant::now() + PROMPT_INJECTION_WINDOW;
+    loop {
+        let Some(before) = screen_text(registry, session_id) else {
+            return;
+        };
+        // A word already on screen (a path in the banner, a word from the
+        // tips panel) proves nothing, so the probe is chosen against the
+        // pre-typing screen.
+        let probe = verification_probe(prompt, &before);
+        if with_session(registry, session_id, |session| session.paste_text(prompt)).is_none() {
+            return;
+        }
+        match wait_for_echo(registry, session_id, probe.as_deref(), &before, ECHO_WINDOW) {
+            EchoOutcome::Gone => return,
+            // The composer is holding our text: the Enter is safe.
+            EchoOutcome::Visible => {
+                submit_typed_prompt(registry, session_id, probe.as_deref());
+                return;
+            }
+            EchoOutcome::Missing => {}
+        }
+
+        // Nothing came back. Either the keystrokes were discarded, or this is
+        // a reader that paints nothing until it sees a newline (a line-mode
+        // shell with echo off). Submitting tells the two apart: the prompt
+        // shows up when it landed, and nothing shows up when it did not.
+        //
+        // This Enter is a keypress into something we cannot see, and some of
+        // those things are questions — Codex's "do you trust this directory?"
+        // reads Enter as yes. Nothing here can tell a line-mode reader from a
+        // dialog: both swallow a paste without repainting, and the difference
+        // is canonical vs raw mode, which lives in the holder's pty and not
+        // here. The old code sent this same blind Enter on every attempt, so
+        // the exposure is unchanged; narrowing it would need the holder to
+        // report termios.
+        if with_session(registry, session_id, |session| session.submit_input()).is_none() {
+            return;
+        }
+        match wait_for_echo(
+            registry,
+            session_id,
+            probe.as_deref(),
+            &before,
+            LANDED_WINDOW,
+        ) {
+            EchoOutcome::Gone | EchoOutcome::Visible => return,
+            EchoOutcome::Missing => {}
+        }
+
+        // Truly swallowed. Empty the composer before retyping so a late echo
+        // cannot concatenate with the retry.
+        if with_session(registry, session_id, |session| session.clear_input_line()).is_none() {
+            return;
+        }
+        if !sleep_until(give_up_at, PROMPT_RETRY_DELAY) {
+            break;
+        }
+    }
+    eprintln!(
+        "homied: {session_id} never accepted its initial prompt within \
+         {}s — left untyped rather than submitted blind",
+        PROMPT_INJECTION_WINDOW.as_secs()
+    );
+}
+
+/// How long a prompt waits for a composer that will take it. Long enough to
+/// outlast a trust dialog or a first-run login, short enough that a session
+/// abandoned at a wall does not hold a thread forever.
+const PROMPT_INJECTION_WINDOW: Duration = Duration::from_secs(180);
+
+/// Quiet time between delivery attempts.
+const PROMPT_RETRY_DELAY: Duration = Duration::from_secs(2);
+
+/// Sleeps for `delay`, or reports false when that would pass `deadline`.
+fn sleep_until(deadline: Instant, delay: Duration) -> bool {
+    if Instant::now() + delay >= deadline {
+        return false;
+    }
+    std::thread::sleep(delay);
+    true
+}
+
+/// What the screen said about a prompt we just typed.
+enum EchoOutcome {
+    /// The prompt is visibly sitting in the composer: safe to submit.
+    Visible,
+    /// Nothing arrived; the composer can be cleared and the prompt retyped.
+    Missing,
+    /// The session exited or vanished — stop touching it.
+    Gone,
+}
+
+/// How long to watch for the prompt to echo back as it is typed, and how long
+/// to watch for it after submitting. The first is short because a TUI that
+/// renders its composer does so immediately; the second is longer because it
+/// covers a round trip through the agent.
+const ECHO_WINDOW: Duration = Duration::from_millis(1500);
+const LANDED_WINDOW: Duration = Duration::from_millis(2500);
+
+/// Polls for the typed prompt to appear on screen. With no usable probe —
+/// every word of the prompt was already on screen — any change from `before`
+/// is taken as the echo, which is the best signal available in that case.
+fn wait_for_echo(
+    registry: &Arc<Mutex<Registry>>,
+    session_id: &str,
+    probe: Option<&str>,
+    before: &str,
+    window: Duration,
+) -> EchoOutcome {
+    let polls = (window.as_millis() / 100).max(1);
+    for _ in 0..polls {
+        std::thread::sleep(Duration::from_millis(100));
+        let Some((exited, now)) = with_session(registry, session_id, |session| {
+            (session.view().exited, session.screen_lines().join("\n"))
+        }) else {
+            return EchoOutcome::Gone;
+        };
+        if exited {
+            return EchoOutcome::Gone;
+        }
+        let echoed = probe.map_or_else(|| now != before, |probe| now.contains(probe));
+        if echoed {
+            return EchoOutcome::Visible;
+        }
+    }
+    EchoOutcome::Missing
+}
+
+/// Presses Enter on a prompt already verified to be in the composer, and
+/// confirms the composer let go of it. A prompt still sitting there after the
+/// first Enter gets exactly one more — never a retype, which is what would
+/// double-send.
+fn submit_typed_prompt(registry: &Arc<Mutex<Registry>>, session_id: &str, probe: Option<&str>) {
+    for _ in 0..2 {
+        if with_session(registry, session_id, |session| session.submit_input()).is_none() {
+            return;
+        }
+        let Some(probe) = probe else {
+            return;
+        };
+        // Submitting moves the prompt out of the composer and into the
+        // transcript above it; either way the agent now owns it. Only a
+        // screen that never moved at all means the Enter was swallowed.
+        for _ in 0..20 {
+            std::thread::sleep(Duration::from_millis(100));
+            match screen_text(registry, session_id) {
+                None => return,
+                Some(now)
+                    if !now.contains(probe) || agent_started_working(registry, session_id) =>
+                {
+                    return;
+                }
+                Some(_) => {}
+            }
+        }
+    }
+}
+
+/// True once the session's own status reducer says the agent is doing
+/// something — the prompt was received even if its text is still echoed in
+/// the transcript above the composer.
+fn agent_started_working(registry: &Arc<Mutex<Registry>>, session_id: &str) -> bool {
+    with_session(registry, session_id, |session| {
+        matches!(
+            session.view().status,
+            homie_proto::SessionStatus::Working | homie_proto::SessionStatus::NeedsInput(_)
+        )
+    })
+    .unwrap_or(false)
+}
+
+fn screen_text(registry: &Arc<Mutex<Registry>>, session_id: &str) -> Option<String> {
+    with_session(registry, session_id, |session| {
+        (!session.view().exited).then(|| session.screen_lines().join("\n"))
+    })
+    .flatten()
+}
+
+/// Waits until the agent can actually receive typed input. First for the
+/// exec (a deferred launch fires within its fallback window), then for the
+/// input line to come alive — bracketed-paste mode is the tell across
+/// Claude/Codex/Cursor/Gemini. Falls back to "screen non-blank and settled"
+/// for agents that never enable paste mode, and hard-caps the wait. False
+/// means stop: the session exited or vanished.
+fn wait_until_ready(registry: &Arc<Mutex<Registry>>, session_id: &str) -> bool {
+    for _ in 0..40 {
+        // ≤ ~4s for the PTY to be spawned (deferred launch included).
+        match with_session(registry, session_id, |session| {
+            (session.view().exited, session.child_pid())
+        }) {
+            None | Some((true, _)) => return false,
+            Some((false, pid)) if pid > 0 => break,
+            Some(_) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+    let mut last_text = String::new();
+    let mut stable_ticks = 0;
+    for tick in 0..200 {
+        // ≤ ~20s hard cap; Claude's first paint can be slow.
+        let Some((exited, paste, text)) = with_session(registry, session_id, |session| {
+            (
+                session.view().exited,
+                session.bracketed_paste(),
+                session.screen_lines().join("\n"),
+            )
+        }) else {
+            return false;
+        };
+        if exited {
+            return false;
+        }
+        if paste {
+            // Paste mode says the input line exists; it does NOT say the TUI
+            // has stopped repainting over it. Claude Code turns paste mode on
+            // while its banner and tips panel are still landing, and anything
+            // typed into that window is discarded. Wait for the screen to
+            // hold still before treating the composer as real.
+            return screen_settled(registry, session_id);
+        }
+        if !text.trim().is_empty() && text == last_text {
+            stable_ticks += 1;
+            if stable_ticks >= 6 && tick >= 10 {
+                return true; // ~600ms stable, at least ~1s in
+            }
+        } else {
+            stable_ticks = 0;
+            last_text = text;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    true
+}
+
+/// Waits (≤ ~5s) for the screen to stop changing, so the prompt is typed into
+/// a composer that has finished being drawn over. True unless the session
+/// exited or vanished; a TUI that simply never goes quiet (an animated
+/// spinner in the banner) still gets its prompt, verified by the echo.
+fn screen_settled(registry: &Arc<Mutex<Registry>>, session_id: &str) -> bool {
+    let mut last = String::new();
+    let mut stable_ticks = 0;
+    for _ in 0..50 {
+        let Some((exited, text)) = with_session(registry, session_id, |session| {
+            (session.view().exited, session.screen_lines().join("\n"))
+        }) else {
+            return false;
+        };
+        if exited {
+            return false;
+        }
+        if text == last {
+            stable_ticks += 1;
+            if stable_ticks >= 3 {
+                return true;
+            }
+        } else {
+            stable_ticks = 0;
+            last = text;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    true
+}
+
+/// A fragment of the prompt whose presence on screen means the composer
+/// received it.
+///
+/// It has to be a WHOLE word, not a leading slice: composers soft-wrap, and
+/// wrapping happens at word boundaries, so any prefix of the prompt can be
+/// split across two screen lines while a single word survives intact. It also
+/// has to be absent from `before`, or a word the banner already displays
+/// would read as an echo the instant we looked. `None` when the prompt offers
+/// nothing that qualifies — a prompt made entirely of words already on
+/// screen, or of words too long to escape wrapping.
+fn verification_probe(prompt: &str, before: &str) -> Option<String> {
+    prompt
+        .split_whitespace()
+        .filter(|word| (MIN_PROBE_CHARS..=MAX_PROBE_CHARS).contains(&word.chars().count()))
+        .filter(|word| !before.contains(*word))
+        .max_by_key(|word| word.chars().count())
+        .map(str::to_owned)
+}
+
+/// Short words appear by coincidence; long ones are the ones a narrow
+/// composer breaks mid-word.
+const MIN_PROBE_CHARS: usize = 4;
+const MAX_PROBE_CHARS: usize = 20;

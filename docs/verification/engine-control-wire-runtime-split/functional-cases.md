@@ -163,3 +163,44 @@ cargo check -p homie-engine
 通过标准：fmt 干净、无 warning（移除残留 unused `Ordering` import）。
 
 证据路径：`docs/verification/engine-control-wire-runtime-split/fc-13-static-gates.log`
+
+---
+
+# S4-a handler 机械下沉（ControlServer 只保留路由表）
+
+## FC-14: handlers.rs 抽取完成且 transport 层留在 control.rs
+
+```bash
+wc -l homie/crates/homie-engine/src/control.rs
+rg -n "fn (session_spawn|session_list|host_|worktree_|session_|governor_|client_set_active|browser_call|hello|resolve_host)\b" \
+  homie/crates/homie-engine/src/control.rs
+rg -n "fn (serve|handle_line|dispatch)\b" homie/crates/homie-engine/src/control/handlers.rs
+```
+
+通过标准：`control.rs` < 800 行（目标 ~460）；control.rs 不再定义任何 handler 方法；
+handlers.rs 不含 serve/handle_line/dispatch。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-14-handler-sink.log`
+
+## FC-15: 全量行为不变
+
+```bash
+cargo test -p homie-engine
+```
+
+通过标准：抽取后全部测试（lib 278 + 集成测试）全绿，0 failed。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-15-full-tests.log`
+
+## FC-16: 静态门禁与范围守卫
+
+```bash
+cargo fmt -p homie-engine -- --check
+cargo check -p homie-engine
+git status --porcelain
+```
+
+通过标准：fmt 干净、无 warning；仅改动 control 模块内文件
+（control.rs / control/handlers.rs / control/tests.rs）。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-16-static-gates.log`
