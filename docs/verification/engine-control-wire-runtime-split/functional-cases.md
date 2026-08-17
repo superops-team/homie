@@ -204,3 +204,41 @@ git status --porcelain
 （control.rs / control/handlers.rs / control/tests.rs）。
 
 证据路径：`docs/verification/engine-control-wire-runtime-split/fc-16-static-gates.log`
+
+---
+
+# S4-b 领域逻辑下沉（worktree_overview → crate::git）
+
+## FC-17: worktree_overview 领域逻辑下沉到 crate::git
+
+```bash
+rg -n "stale_suggestion" homie/crates/homie-engine/src/control/handlers.rs
+rg -n "pub fn worktree_overview" homie/crates/homie-engine/src/git.rs
+```
+
+通过标准：`worktree_overview` 的 staleness join + git subprocess 领域逻辑由
+`crate::git::worktree_overview` 拥有；handler 只剩 lock registry + 收集 records/roots +
+调用 + encode。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-17-worktree-sink.log`
+
+## FC-18: 全量行为不变
+
+```bash
+cargo test -p homie-engine
+```
+
+通过标准：抽取后全部测试（lib 278 + 集成测试）全绿，0 failed。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-18-full-tests.log`
+
+## FC-19: 静态门禁
+
+```bash
+cargo fmt -p homie-engine -- --check
+cargo check -p homie-engine
+```
+
+通过标准：fmt 干净、无 warning。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-19-static-gates.log`

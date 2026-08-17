@@ -479,9 +479,9 @@ impl ControlServer {
     /// The aggregated staleness view: every worktree of every project,
     /// joined with the session (live wins) occupying it, its dirtiness,
     /// merged-ness into the default branch, and age — plus the "safe to
-    /// clean up" suggestion.
+    /// clean up" suggestion. The staleness join itself lives in `crate::git`.
     pub(super) fn worktree_overview(&self) -> Result<JsonValue, ControlError> {
-        let (records, mut roots) = {
+        let (records, roots) = {
             let registry = self.registry.lock().map_err(poisoned)?;
             let roots: Vec<String> = registry
                 .projects_raw()
@@ -491,112 +491,7 @@ impl ControlServer {
                 .collect();
             (registry.records(), roots)
         };
-        roots.sort();
-
-        // Join sessions by worktree path (fallback cwd); a live session wins
-        // over an exited one sharing the path.
-        let mut session_by_path: std::collections::HashMap<String, &homie_proto::SessionRecord> =
-            std::collections::HashMap::new();
-        let running = |record: &homie_proto::SessionRecord| {
-            !matches!(
-                record.status,
-                homie_proto::SessionStatus::Exited(_) | homie_proto::SessionStatus::Unknown
-            )
-        };
-        for record in &records {
-            let path = record
-                .worktree_path
-                .clone()
-                .unwrap_or_else(|| record.cwd.clone());
-            match session_by_path.get(&path) {
-                Some(existing) if running(existing) || !running(record) => {}
-                _ => {
-                    session_by_path.insert(path, record);
-                }
-            }
-        }
-
-        let run_git = |args: &[&str], dir: &str| -> Option<String> {
-            let output = std::process::Command::new("git")
-                .args(args)
-                .current_dir(dir)
-                .env("LC_ALL", "C")
-                .env("LANG", "C")
-                .env("LANGUAGE", "C")
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .output()
-                .ok()?;
-            output
-                .status
-                .success()
-                .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        };
-
-        let mut entries = Vec::new();
-        let mut seen_paths = std::collections::HashSet::new();
-        for root in roots {
-            if !crate::git::is_repository(Path::new(&root)) {
-                continue;
-            }
-            let Ok(worktrees) = crate::git::list_worktrees(Path::new(&root)) else {
-                continue;
-            };
-            // Repo's default branch: origin/HEAD symbolic ref, else "main".
-            let default_branch = run_git(
-                &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-                &root,
-            )
-            .and_then(|full| full.rsplit('/').next().map(str::to_string))
-            .filter(|short| !short.is_empty())
-            .unwrap_or_else(|| "main".into());
-            let merged_branches: std::collections::HashSet<String> = run_git(
-                &[
-                    "branch",
-                    "--merged",
-                    &default_branch,
-                    "--format=%(refname:short)",
-                ],
-                &root,
-            )
-            .map(|output| output.lines().map(str::to_string).collect())
-            .unwrap_or_default();
-
-            for worktree in worktrees {
-                if worktree.is_bare || !seen_paths.insert(worktree.path.clone()) {
-                    continue;
-                }
-                let is_main = worktree.path == root;
-                let dirty = run_git(&["status", "--porcelain"], &worktree.path)
-                    .is_some_and(|output| !output.is_empty());
-                let merged = worktree.branch.as_ref().is_some_and(|branch| {
-                    branch != &default_branch && merged_branches.contains(branch)
-                });
-                let age_days = std::fs::metadata(&worktree.path)
-                    .ok()
-                    .and_then(|meta| meta.created().or_else(|_| meta.modified()).ok())
-                    .and_then(|at| at.elapsed().ok())
-                    .map(|elapsed| (elapsed.as_secs() / 86_400) as i64)
-                    .unwrap_or(0);
-                let record = session_by_path.get(&worktree.path);
-                let session_alive = record.is_some_and(|record| running(record));
-                entries.push(homie_proto::WorktreeOverviewEntry {
-                    path: worktree.path.clone(),
-                    branch: worktree.branch.clone(),
-                    project_root: root.clone(),
-                    session_id: record.map(|record| record.id.clone()),
-                    session_status: record.map(|record| record.status.clone()),
-                    dirty,
-                    merged,
-                    age_days,
-                    stale_suggestion: !is_main
-                        && !session_alive
-                        && merged
-                        && !dirty
-                        && age_days > 7,
-                });
-            }
-        }
-        encode(&homie_proto::WorktreeOverviewResult { entries })
+        encode(&crate::git::worktree_overview(&records, roots))
     }
 
     /// One-click handoff of a live Claude session between hosts: WIP commit

@@ -159,3 +159,44 @@
 
 - S4-a 仅为机械下沉，handler 方法体内仍直接 `self.registry.lock()` 等跨领域操作；
   真正的领域逻辑下沉（registry/session/remote manager）留待 S4-b。
+
+---
+
+# S4-b 领域逻辑下沉（worktree_overview）功能验证
+
+## 1. 结论
+
+`engine-control-wire-runtime-split` 第四切片下半部（S4-b 领域逻辑下沉）首个增量
+`worktree_overview` 验证通过。
+
+已完成：
+
+- 新增 `crate::git::worktree_overview(records, roots) -> WorktreeOverviewResult` 纯领域函数，
+  承接原先内联在 `ControlServer::worktree_overview` handler 内的 staleness join +
+  git subprocess 逻辑（约 110 行）。
+- `control/handlers.rs` 的 `worktree_overview` handler 收敛为：lock registry →
+  收集 records/roots → 调用 `crate::git::worktree_overview` → encode（约 12 行）。
+- 领域函数体一字未改，仅从 handler 内联搬迁到 `git.rs` 并改为接收 `records`/`roots`
+  参数；wire shape 与行为完全不变。
+
+## 2. Case 执行结果
+
+| Case | 状态 | 证据 |
+|---|---|---|
+| FC-17 worktree_overview 下沉到 git.rs | pass | handler 不再内联 staleness join；`git::worktree_overview` 拥有领域逻辑 |
+| FC-18 全量行为不变 | pass | 278 lib + 集成测试全绿，0 failed |
+| FC-19 静态门禁 | pass | `cargo fmt --check` 干净、`cargo check` 无 warning |
+
+## 3. 关键证据
+
+- `crate::git::worktree_overview` 为纯领域函数，无 ControlServer/socket/registry 依赖，
+  可脱离 daemon 单测。
+- `cargo test -p homie-engine`：278 lib tests + 集成测试全部 `0 failed`。
+- `cargo fmt --check` clean；`cargo check` 0 warning。
+
+## 4. 残余风险
+
+- S4-b 剩余大项：`session_spawn` / `session_spawn_remote` / `session_migrate` /
+  `session_resume` 家族的 spawn/resume/migrate 领域逻辑仍内联在 handler，且与
+  `ControlServer` 字段（injection/socket_path/logs_dir/holder/remote）耦合较深，
+  需按独立切片继续下沉。
