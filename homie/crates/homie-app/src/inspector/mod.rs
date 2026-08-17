@@ -4,6 +4,8 @@
 //! This module owns selection tracking, session/PR/artifact projections,
 //! background Git refreshes, unified-diff snapshots, and diff virtualization.
 
+mod state;
+
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -19,7 +21,7 @@ use gpui::{
 };
 use homie_proto::{
     AgentKind as ProtoAgentKind, ArtifactKind, PrCheck, PrDiscussionItem, PullRequestStatus,
-    SessionArtifact, SessionDiffBase, SessionId, SessionRecord, SessionStatus,
+    SessionArtifact, SessionDiffBase, SessionRecord, SessionStatus,
 };
 use homie_ui::{
     AgentKind, AgentLogo, Fill, FloatingSurface, Ink, LoadingIndicator, Metrics, Radius,
@@ -31,13 +33,15 @@ use crate::diff::{
     DiffFile, DiffHunk, DiffLayer, DiffRow, DiffRowKind, DiffSnapshot, load_local_diff,
     snapshot_from_read_diff,
 };
-use crate::git_review::{GitRepository, GitReviewError, PatchMutation, ReviewStatus};
+use crate::git_review::{GitRepository, GitReviewError, PatchMutation};
 use crate::macos::sf_symbols::{SymbolWeight, sf_symbol, sf_symbol_weighted};
 use crate::markdown::MarkdownDocument;
 use crate::markdown_view::render_markdown;
 use crate::query_editor::{self, ClipboardEdit, Edit, QueryEditor};
 use crate::review_prompt::{ReviewEvidence, ReviewLayer, ReviewPrompt};
 use crate::store::{InspectorTab, StoreRuntime};
+
+use state::{AskDraft, DiffContext, LoadState, ReviewAction, ReviewLoadState};
 
 const DIFF_ROW_HEIGHT: f32 = 20.0;
 const GUTTER_WIDTH: f32 = 68.0;
@@ -71,79 +75,6 @@ struct ScrollbarMetrics {
 #[derive(Clone, Copy, Debug)]
 pub enum InspectorEvent {
     Close,
-}
-
-impl InspectorTab {
-    const ALL: [Self; 4] = [Self::Info, Self::Changes, Self::Code, Self::Artifacts];
-
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Info => "Info",
-            Self::Changes => "Review",
-            Self::Code => "Code",
-            Self::Artifacts => "Artifacts",
-        }
-    }
-
-    const fn index(self) -> i8 {
-        match self {
-            Self::Info => 0,
-            Self::Changes => 1,
-            Self::Code => 2,
-            Self::Artifacts => 3,
-        }
-    }
-
-    const fn debug_selector(self) -> &'static str {
-        match self {
-            Self::Info => "INSPECTOR_TAB_INFO",
-            Self::Changes => "INSPECTOR_TAB_CHANGES",
-            Self::Code => "INSPECTOR_TAB_CODE",
-            Self::Artifacts => "INSPECTOR_TAB_ARTIFACTS",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct DiffContext {
-    id: SessionId,
-    cwd: PathBuf,
-    remote: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum LoadState {
-    NoSession,
-    Loading,
-    Ready(Arc<DiffSnapshot>),
-    Error(String),
-}
-
-#[derive(Clone, Debug)]
-enum ReviewLoadState {
-    NoSession,
-    Remote,
-    Loading,
-    Ready(Arc<ReviewStatus>),
-    Error(String),
-}
-
-#[derive(Clone, Debug)]
-enum ReviewAction {
-    Stage(Vec<PathBuf>),
-    Unstage(Vec<PathBuf>),
-    Discard(Vec<PathBuf>),
-    Patch {
-        patch: Vec<u8>,
-        mutation: PatchMutation,
-    },
-    Commit(String),
-}
-
-#[derive(Clone, Debug)]
-struct AskDraft {
-    evidence: Vec<ReviewEvidence>,
-    label: String,
 }
 
 pub struct WorkbenchInspector {
@@ -4343,6 +4274,8 @@ fn render_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use homie_proto::SessionId;
 
     fn inspector_fixture_session() -> SessionRecord {
         SessionRecord {
