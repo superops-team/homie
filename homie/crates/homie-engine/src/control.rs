@@ -24,7 +24,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::registry::Registry;
+mod codec;
 mod wire;
+use codec::{history_entry_to_wire, worktree_to_wire};
 use wire::{
     decode, encode, io_control_error, migrate_control_error, poisoned, resolve_on_path,
     write_message,
@@ -2380,32 +2382,6 @@ fn shell_pty_environment(mut inherited: Vec<(String, String)>) -> Vec<(String, S
     inherited.retain(|(key, _)| key != "TERM" && key != "NO_COLOR");
     inherited.push(("TERM".into(), "xterm-256color".into()));
     inherited
-}
-
-fn history_entry_to_wire(entry: crate::history::HistoryEntry) -> homie_proto::HistoryEntry {
-    homie_proto::HistoryEntry {
-        id: entry.id,
-        kind: match entry.kind {
-            crate::history::HistoryKind::ClaudeCode => homie_proto::AgentKind::CLAUDE_CODE,
-            crate::history::HistoryKind::Codex => homie_proto::AgentKind::CODEX,
-        },
-        cwd: entry.cwd,
-        title: entry.title,
-        transcript_path: entry.transcript_path,
-        last_active_at: homie_proto::DateMillis::from(entry.last_active_at),
-        created_at: entry.created_at.map(homie_proto::DateMillis::from),
-        cwd_exists: entry.cwd_exists,
-    }
-}
-
-fn worktree_to_wire(info: crate::git::WorktreeInfo) -> homie_proto::WorktreeInfo {
-    homie_proto::WorktreeInfo {
-        path: info.path,
-        branch: info.branch,
-        is_bare: info.is_bare,
-        is_detached: info.is_detached,
-        is_prunable: info.is_prunable,
-    }
 }
 
 /// Reads one fact about a live session under a short registry lock; `None`

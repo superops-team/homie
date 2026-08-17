@@ -64,3 +64,51 @@ git diff --name-only -- homie/crates/homie-engine/src/control
 通过标准：fmt 干净、无 warning、只改动 control 模块内预期文件。
 
 证据路径：`docs/verification/engine-control-wire-runtime-split/fc-05-static-gates.log`
+
+---
+
+# S2 codec 投影（history_entry_to_wire / worktree_to_wire）
+
+## FC-06: codec.rs 纯函数抽取完成且无重依赖
+
+```bash
+test -s homie/crates/homie-engine/src/control/codec.rs
+rg -n "Registry|Session|ControlServer|spawn|bind\(|UnixListener|Mutex|Arc" \
+  homie/crates/homie-engine/src/control/codec.rs
+```
+
+通过标准：文件存在；`rg` 无 Registry/Session/ControlServer/spawn/bind/UnixListener/Mutex/Arc 命中。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-06-codec-pure.log`
+
+## FC-07: codec 投影 focused tests
+
+```bash
+cargo test -p homie-engine control::codec -- --nocapture
+```
+
+通过标准：覆盖 kind 映射（ClaudeCode→CLAUDE_CODE、Codex→CODEX）、标量字段保留、
+时间戳毫秒换算、created_at/title 缺失保留、worktree 字段保留、bare/缺 branch 保留。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-07-codec-tests.log`
+
+## FC-08: 全量行为不变
+
+```bash
+cargo test -p homie-engine
+```
+
+通过标准：抽取后全部测试（lib 278 + 集成测试）全绿，0 failed。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-08-full-tests.log`
+
+## FC-09: 静态门禁与范围守卫
+
+```bash
+cargo fmt -p homie-engine -- --check
+cargo check -p homie-engine
+```
+
+通过标准：fmt 干净、无 warning。
+
+证据路径：`docs/verification/engine-control-wire-runtime-split/fc-09-static-gates.log`
