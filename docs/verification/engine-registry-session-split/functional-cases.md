@@ -67,3 +67,53 @@ cargo check -p homie-engine
 通过标准：fmt 干净、无 warning。
 
 证据路径：`docs/verification/engine-registry-session-split/fc-05-static-gates.log`
+
+---
+
+# S2 store 后端抽取（PersistenceStore + JsonEnvelopeStore + SplitJsonStore + write_json_atomic/invalid_data）
+
+### FC-06: store.rs 抽取完成且无 live-session 依赖
+
+```bash
+test -s homie/crates/homie-engine/src/registry/store.rs
+rg -n "Registry|Session::spawn|spawn_persist_flusher|HashMap<.*Session" \
+  homie/crates/homie-engine/src/registry/store.rs
+```
+
+通过标准：文件存在；`rg` 无 Registry/Session::spawn/flusher/HashMap<Session> 命中
+（store.rs 只含持久化后端 + 原子写辅助函数）。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-06-store-pure.log`
+
+### FC-07: store focused tests
+
+```bash
+cargo test -p homie-engine registry::tests -- --nocapture
+```
+
+通过标准：`split_store_dry_run_migration_writes_nothing`、
+`split_store_migration_preserves_backup_and_loads_records`、
+`split_store_quarantines_one_corrupt_session_file` 全绿。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-07-store-tests.log`
+
+### FC-08: 全量行为不变（S2）
+
+```bash
+cargo test -p homie-engine
+```
+
+通过标准：抽取后全部测试（lib 278 + 集成测试）全绿，0 failed。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-08-full-tests.log`
+
+### FC-09: 静态门禁（S2）
+
+```bash
+cargo fmt -p homie-engine -- --check
+cargo check -p homie-engine
+```
+
+通过标准：fmt 干净、无 warning（pub use 重导出保留公共可达性，无 dead_code）。
+
+证据路径：`docs/verification/engine-registry-session-split/fc-09-static-gates.log`
