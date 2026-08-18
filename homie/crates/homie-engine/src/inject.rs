@@ -21,6 +21,71 @@ pub const SESSION_ID_ENV: &str = "HOMIE_SESSION_ID";
 pub const SOCKET_ENV: &str = "HOMIE_SOCKET";
 pub const CLI_ENV: &str = "HOMIE_CLI";
 
+/// Environment variable Codex reads (via `model_providers.homie.env_key`) for
+/// the gateway virtual key. Named under `HOMIE_` so the daemon owns it, but
+/// injected *after* env scrubbing so it survives into the session.
+pub const CODEX_GATEWAY_ENV: &str = "HOMIE_CODEX_GATEWAY_KEY";
+
+/// Runtime facts about the local LLM gateway injected into agents that opt in.
+///
+/// `base_url` is the gateway root (e.g. `http://127.0.0.1:7338`); Codex gets
+/// `<base_url>/v1` as its OpenAI-compatible base, Claude Code gets `base_url`
+/// directly as `ANTHROPIC_BASE_URL`. `virtual_key` is a `sk-…` issued to the
+/// session and never shown after issuance.
+#[derive(Clone, Debug)]
+pub struct GatewayRuntime {
+    pub base_url: String,
+    pub virtual_key: String,
+}
+
+impl GatewayRuntime {
+    fn codex_base_url(&self) -> String {
+        format!("{}/v1", self.base_url.trim_end_matches('/'))
+    }
+}
+
+/// Codex `-c` overrides routing it through the local gateway.
+pub fn codex_gateway_args(runtime: &GatewayRuntime) -> Vec<String> {
+    vec![
+        "-c".into(),
+        "model_provider=\"homie\"".into(),
+        "-c".into(),
+        format!(
+            "model_providers.homie.base_url=\"{}\"",
+            runtime.codex_base_url()
+        ),
+        "-c".into(),
+        "model_providers.homie.wire_api=\"responses\"".into(),
+        "-c".into(),
+        format!("model_providers.homie.env_key=\"{}\"", CODEX_GATEWAY_ENV),
+    ]
+}
+
+/// Environment a Claude Code session needs to route through the gateway.
+pub fn claude_gateway_env(runtime: &GatewayRuntime) -> Vec<(String, String)> {
+    vec![
+        ("ANTHROPIC_BASE_URL".into(), runtime.base_url.clone()),
+        ("ANTHROPIC_AUTH_TOKEN".into(), runtime.virtual_key.clone()),
+    ]
+}
+
+/// Environment a Codex session needs to supply the virtual key.
+pub fn codex_gateway_env(runtime: &GatewayRuntime) -> Vec<(String, String)> {
+    vec![(CODEX_GATEWAY_ENV.into(), runtime.virtual_key.clone())]
+}
+
+/// Combined session env for gateway routing, gated by each agent's opt-in.
+pub fn gateway_env(injection: &InjectionSpec, runtime: &GatewayRuntime) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if injection.claude_gateway {
+        env.extend(claude_gateway_env(runtime));
+    }
+    if injection.codex_gateway {
+        env.extend(codex_gateway_env(runtime));
+    }
+    env
+}
+
 /// A random v4 UUID in the lowercase-hex form Claude accepts as
 /// `--session-id`. Minting it ourselves is what makes resume possible later
 /// without the agent ever reporting an id.
@@ -113,6 +178,7 @@ pub fn injection_args(
     injection: &InjectionSpec,
     inject_dir: &Path,
     cli_path: &Path,
+    gateway: Option<&GatewayRuntime>,
 ) -> Vec<String> {
     let mut argv = Vec::new();
     if injection.claude_hooks {
@@ -150,6 +216,11 @@ pub fn injection_args(
         ));
         argv.push("-c".into());
         argv.push(format!("mcp_servers.homie.args=[{encoded_args}]"));
+    }
+    if injection.codex_gateway {
+        if let Some(runtime) = gateway {
+            argv.extend(codex_gateway_args(runtime));
+        }
     }
     argv
 }
@@ -281,7 +352,7 @@ mod tests {
             claude_mcp: true,
             ..Default::default()
         };
-        let args = injection_args(&claude, temp.path(), &cli);
+        let args = injection_args(&claude, temp.path(), &cli, None);
         assert_eq!(args[0], "--settings");
         assert!(args[1].ends_with("claude-hooks.json"));
         assert_eq!(args[2], "--mcp-config");
@@ -292,7 +363,7 @@ mod tests {
             codex_mcp: true,
             ..Default::default()
         };
-        let args = injection_args(&codex, temp.path(), &cli);
+        let args = injection_args(&codex, temp.path(), &cli, None);
         assert_eq!(args[0], "-c");
         assert!(args[1].starts_with("notify=["), "{args:?}");
         assert!(
@@ -300,6 +371,93 @@ mod tests {
                 .any(|arg| arg.starts_with("mcp_servers.homie.command=")),
             "{args:?}"
         );
+    }
+
+    #[test]
+    fn codex_gateway_args_route_through_local_gateway() {
+        let runtime = GatewayRuntime {
+            base_url: "http://127.0.0.1:7338".into(),
+            virtual_key: "sk-abc123".into(),
+        };
+        let injection = InjectionSpec {
+            codex_gateway: true,
+            ..Default::default()
+        };
+        let temp = tempfile::tempdir().expect("temp");
+        let cli = temp.path().join("homie");
+        let args = injection_args(&injection, temp.path(), &cli, Some(&runtime));
+        assert!(args.iter().any(|a| a == "-c"), "{args:?}");
+        assert!(
+            args.iter().any(|a| a == "model_provider=\"homie\""),
+            "{args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|a| a == "model_providers.homie.base_url=\"http://127.0.0.1:7338/v1\""),
+            "{args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|a| a == "model_providers.homie.wire_api=\"responses\""),
+            "{args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|a| *a == format!("model_providers.homie.env_key=\"{}\"", CODEX_GATEWAY_ENV)),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn gateway_args_absent_without_opt_in_or_runtime() {
+        let temp = tempfile::tempdir().expect("temp");
+        let cli = temp.path().join("homie");
+        let runtime = GatewayRuntime {
+            base_url: "http://127.0.0.1:7338".into(),
+            virtual_key: "sk-x".into(),
+        };
+        // Not opted in → no gateway args even with a runtime.
+        let no_opt = InjectionSpec::default();
+        assert!(injection_args(&no_opt, temp.path(), &cli, Some(&runtime)).is_empty());
+        // Opted in but no runtime → no gateway args.
+        let opt = InjectionSpec {
+            codex_gateway: true,
+            ..Default::default()
+        };
+        assert!(injection_args(&opt, temp.path(), &cli, None).is_empty());
+    }
+
+    #[test]
+    fn claude_gateway_env_sets_anthropic_base_and_token() {
+        let runtime = GatewayRuntime {
+            base_url: "http://127.0.0.1:7338".into(),
+            virtual_key: "sk-abc123".into(),
+        };
+        let env = claude_gateway_env(&runtime);
+        assert_eq!(env.len(), 2);
+        assert_eq!(
+            env[0],
+            (
+                "ANTHROPIC_BASE_URL".to_owned(),
+                "http://127.0.0.1:7338".to_owned()
+            )
+        );
+        assert_eq!(
+            env[1],
+            ("ANTHROPIC_AUTH_TOKEN".to_owned(), "sk-abc123".to_owned())
+        );
+    }
+
+    #[test]
+    fn codex_gateway_env_exposes_key_via_env_key() {
+        let runtime = GatewayRuntime {
+            base_url: "http://127.0.0.1:7338".into(),
+            virtual_key: "sk-abc123".into(),
+        };
+        let env = codex_gateway_env(&runtime);
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].0, CODEX_GATEWAY_ENV);
+        assert_eq!(env[0].1, "sk-abc123");
     }
 
     #[test]

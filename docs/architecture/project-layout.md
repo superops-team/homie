@@ -39,6 +39,7 @@ worktree setup.
 | `homie-mcp` | MCP bridge binary |
 | `homie-updater` | Update/install support |
 | `homie-usage` | Usage domain types and helpers |
+| `homie-gateway` | Local LLM gateway: virtual keys, OpenAI/Anthropic-compatible proxy, upstream forwarding, per-key usage |
 
 ## 4. Swift Package
 

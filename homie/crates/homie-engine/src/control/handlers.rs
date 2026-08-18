@@ -155,6 +155,7 @@ impl ControlServer {
                     &descriptor.injection,
                     &injection.inject_dir,
                     &injection.cli_path,
+                    injection.gateway.as_ref(),
                 ));
             }
         }
@@ -207,6 +208,10 @@ impl ControlServer {
                     crate::inject::CLI_ENV.into(),
                     injection.cli_path.to_string_lossy().into_owned(),
                 ));
+                if let Some(runtime) = &injection.gateway {
+                    pty.env
+                        .extend(crate::inject::gateway_env(&descriptor.injection, runtime));
+                }
             }
             if let Some(uuid) = &agent_session_id {
                 record.agent_session_id = Some(uuid.clone());
@@ -1292,6 +1297,7 @@ impl ControlServer {
                 &claude_only,
                 &injection.inject_dir,
                 &injection.cli_path,
+                None,
             ));
         }
 
@@ -1310,6 +1316,17 @@ impl ControlServer {
                 crate::inject::CLI_ENV.into(),
                 injection.cli_path.to_string_lossy().into_owned(),
             ));
+            if let Some(runtime) = &injection.gateway {
+                // Claude routes through env vars, so a resumed session keeps
+                // pointing at the gateway; Codex `-c` overrides are not
+                // replayed here (matching the existing replay rule).
+                let claude_only = crate::agent::InjectionSpec {
+                    claude_gateway: descriptor.injection.claude_gateway,
+                    ..Default::default()
+                };
+                pty.env
+                    .extend(crate::inject::gateway_env(&claude_only, runtime));
+            }
         }
         Ok(crate::session::SessionSpec {
             id: id.to_string(),

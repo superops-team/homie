@@ -12,6 +12,8 @@ architecture work. Read it before adding or replacing dependencies.
 | Native UI | `gpui` | Desktop app UI framework | Pinned to Zed revision in `homie/Cargo.toml`; GPUI is pre-1.0, so local pinned API is the authority |
 | Platform backend | `gpui_platform`, patched `gpui_macos` | Windowing, macOS rendering, platform integration | Local patch avoids Command Line Tools-only Metal shader build failures and renderer issues |
 | Async runtime | `tokio` | Daemon/client async runtime, app-side background orchestration | Use explicit task ownership for UI lifecycle work |
+| HTTP server | `axum` | Local LLM gateway HTTP server (owner crate `homie-gateway`) | `json` feature; loopback-only bind |
+| HTTP client | `reqwest` | Gateway upstream forwarding (owner crate `homie-gateway`) | `json` + `stream` features; SSE pass-through |
 | Terminal engine | `alacritty_terminal` | Terminal state/emulation foundation | Keep PTY and terminal state outside GPUI render logic |
 | File watching | `notify` | Transcript and filesystem invalidation | Debounce and reconcile before UI updates |
 | Matching/search | `nucleo-matcher` | Fuzzy matching | Prefer shared helpers over ad hoc matching |

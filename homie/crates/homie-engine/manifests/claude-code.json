@@ -32,7 +32,8 @@
     ],
     "injection": {
       "claudeHooks": true,
-      "claudeMCP": true
+      "claudeMCP": true,
+      "claudeGateway": false
     },
     "foregroundExecNames": [
       "claude"

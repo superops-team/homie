@@ -122,6 +122,7 @@ fn main() {
         .with_injection(InjectionConfig {
             inject_dir: app_support.join("inject"),
             cli_path,
+            gateway: None,
         });
     if let Some(remote) = remote_manager(&exe_dir, &app_support) {
         server = server.with_remote(remote);

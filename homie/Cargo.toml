@@ -3,6 +3,7 @@ members = [
     "crates/homie-app",
     "crates/homie-client",
     "crates/homie-engine",
+    "crates/homie-gateway",
     "crates/homie-node",
     "crates/homie-mcp",
     "crates/homie-proto",
@@ -26,6 +27,7 @@ alacritty_terminal = { version = "0.26", default-features = false }
 base64 = "0.23"
 homie-client = { path = "crates/homie-client" }
 homie-engine = { path = "crates/homie-engine" }
+homie-gateway = { path = "crates/homie-gateway" }
 homie-node = { path = "crates/homie-node" }
 homie-proto = { path = "crates/homie-proto" }
 homie-pty = { path = "crates/homie-pty" }

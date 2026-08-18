@@ -27,7 +27,8 @@
     ],
     "injection": {
       "codexNotify": true,
-      "codexMCP": true
+      "codexMCP": true,
+      "codexGateway": false
     },
     "foregroundExecNames": [
       "codex"
