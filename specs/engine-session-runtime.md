@@ -46,3 +46,20 @@ Changes affecting shell/generic PTY environment must include:
    with `TERM=xterm-256color`;
 3. a socket or equivalent real-control-path regression when user-visible shell
    behavior is affected.
+
+## 5. ACP Host Harness Boundary
+
+`homie-engine` additionally exposes an ACP (Agent Client Protocol) host harness
+(`homie-engine/src/acp/`) for driving ACP-compliant agent servers such as
+`codex-acp` over stdio JSON-RPC 2.0. This is an *additional structured control
+surface*, not a replacement for the PTY/holder authority described above.
+
+- PTY/holder remains the source of truth for session lifecycle, environment,
+  screen state, and child supervision.
+- The ACP harness is a capability-driven adapter (`AcpDriver`) that maps typed
+  control actions (`cancel_turn`, `steer_message`, `respond_permission`) onto
+  ACP methods (`session/stop`, `session/prompt`, `session/respond_permission`).
+- The ACP harness does not own credential custody, LLM proxying, or session
+  supervision; those remain in the established engine layers.
+- This first slice does not wire `AcpDriver` into the `session.spawn` path;
+  session-driver integration is a follow-up change.

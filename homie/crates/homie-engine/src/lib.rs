@@ -17,6 +17,7 @@
 //! - **No alternate daemon path.** This Engine is the single owner of
 //!   background process supervision.
 
+pub mod acp;
 pub mod agent;
 pub mod artifacts;
 pub mod attach;

@@ -46,3 +46,8 @@ tempfile.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
+
+[[test]]
+name = "acp_host"
+path = "tests/acp_host.rs"
+harness = false
