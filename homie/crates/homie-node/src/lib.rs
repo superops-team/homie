@@ -7,6 +7,7 @@
 pub mod accounts;
 pub mod checkpoint;
 pub mod config;
+pub mod credentials;
 pub mod error;
 pub mod provider;
 pub mod server;
@@ -14,6 +15,9 @@ pub mod service;
 pub mod usage;
 
 pub use config::{NodeConfig, NodePaths};
+pub use credentials::{
+    CredentialKind, ResolvedCredential, resolve_codex_api_key, resolve_default_codex_credential,
+};
 pub use error::{NodeError, NodeResult};
 pub use server::NodeServer;
 pub use service::NodeService;

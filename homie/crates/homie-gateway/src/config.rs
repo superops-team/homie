@@ -23,6 +23,10 @@ pub struct GatewayConfig {
     pub models: BTreeMap<String, String>,
     /// Optional gateway policy (rate limit / quota). `None` means no limits.
     pub policy: Option<Policy>,
+    /// How the upstream credential is resolved. `static` reads the configured
+    /// key; `node` resolves it from the local Homie node (falling back to the
+    /// static key when resolution fails).
+    pub credential_source: CredentialSource,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -36,6 +40,9 @@ struct FileConfig {
     /// Optional gateway policy. `None` means no limits.
     #[serde(default)]
     policy: Option<Policy>,
+    /// How the upstream credential is resolved. Defaults to `static`.
+    #[serde(default)]
+    credential_source: CredentialSource,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -62,6 +69,18 @@ pub struct Policy {
     pub rate_limit: Option<RateLimit>,
     #[serde(default)]
     pub quota: Option<Quota>,
+}
+
+/// How the gateway resolves its upstream credential.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CredentialSource {
+    /// Read the configured `upstream.apiKey` (current behavior).
+    #[default]
+    Static,
+    /// Resolve the upstream credential from the local Homie node, falling back
+    /// to `upstream.apiKey` when resolution fails.
+    Node,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -125,7 +144,8 @@ impl GatewayConfig {
                 "upstream.baseUrl is empty",
             ));
         }
-        if file.upstream.api_key.trim().is_empty() {
+        let node_mode = file.credential_source == CredentialSource::Node;
+        if !node_mode && file.upstream.api_key.trim().is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "upstream.apiKey is empty",
@@ -154,6 +174,7 @@ impl GatewayConfig {
             master_key: file.gateway.master_key,
             models: file.models,
             policy: file.policy,
+            credential_source: file.credential_source,
         })
     }
 }
@@ -199,6 +220,7 @@ mod tests {
             },
             models: BTreeMap::new(),
             policy: None,
+            credential_source: CredentialSource::Static,
         };
         assert!(GatewayConfig::from_file(file).is_err());
     }
@@ -216,6 +238,7 @@ mod tests {
             },
             models: BTreeMap::new(),
             policy: None,
+            credential_source: CredentialSource::Static,
         };
         assert!(GatewayConfig::from_file(file).is_err());
     }
@@ -236,6 +259,7 @@ mod tests {
                 ("claude".to_string(), "claude-sonnet-4-5".to_string()),
             ]),
             policy: None,
+            credential_source: CredentialSource::Static,
         };
         let cfg = GatewayConfig::from_file(file).expect("valid");
         assert_eq!(cfg.models["codex"], "gpt-5.2-codex");
@@ -262,6 +286,7 @@ mod tests {
                     daily_token_limit: 100000,
                 }),
             }),
+            credential_source: CredentialSource::Static,
         };
         let cfg = GatewayConfig::from_file(file).expect("valid");
         let policy = cfg.policy.expect("policy");
@@ -282,6 +307,7 @@ mod tests {
             },
             models: BTreeMap::new(),
             policy: None,
+            credential_source: CredentialSource::Static,
         };
         let cfg = GatewayConfig::from_file(file).expect("valid");
         assert!(cfg.policy.is_none());
@@ -300,8 +326,56 @@ mod tests {
             },
             models: BTreeMap::new(),
             policy: None,
+            credential_source: CredentialSource::Static,
         };
         let cfg = GatewayConfig::from_file(file).expect("valid");
         assert_eq!(cfg.base_url, "https://api.example.com/v1");
+    }
+
+    #[test]
+    fn credential_source_defaults_to_static() {
+        let file: FileConfig = serde_json::from_str(
+            r#"{"gateway":{"listen":"127.0.0.1:7338"},"upstream":{"baseUrl":"https://api.example.com/v1","apiKey":"sk-x"}}"#,
+        )
+        .expect("parse");
+        assert_eq!(file.credential_source, CredentialSource::Static);
+    }
+
+    #[test]
+    fn node_mode_allows_empty_api_key() {
+        let file = FileConfig {
+            gateway: GatewaySection {
+                listen: default_listen(),
+                master_key: None,
+            },
+            upstream: UpstreamSection {
+                base_url: "https://api.example.com/v1".into(),
+                api_key: "".into(),
+            },
+            models: BTreeMap::new(),
+            policy: None,
+            credential_source: CredentialSource::Node,
+        };
+        let cfg = GatewayConfig::from_file(file).expect("valid");
+        assert_eq!(cfg.credential_source, CredentialSource::Node);
+        assert_eq!(cfg.api_key, "");
+    }
+
+    #[test]
+    fn static_mode_rejects_empty_api_key() {
+        let file = FileConfig {
+            gateway: GatewaySection {
+                listen: default_listen(),
+                master_key: None,
+            },
+            upstream: UpstreamSection {
+                base_url: "https://api.example.com/v1".into(),
+                api_key: "".into(),
+            },
+            models: BTreeMap::new(),
+            policy: None,
+            credential_source: CredentialSource::Static,
+        };
+        assert!(GatewayConfig::from_file(file).is_err());
     }
 }

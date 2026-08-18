@@ -8,7 +8,9 @@ use std::env;
 
 use tokio::net::TcpListener;
 
-use homie_gateway::config::{GatewayConfig, config_path, db_path, listen_or_default};
+use homie_gateway::config::{
+    CredentialSource, GatewayConfig, config_path, db_path, listen_or_default,
+};
 use homie_gateway::db::Db;
 use homie_gateway::inject;
 use homie_gateway::state::AppState;
@@ -51,7 +53,8 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let config = GatewayConfig::load(&config_path())?;
     let db = Db::open(&db_path())?;
-    let upstream = Upstream::new(config.base_url.clone(), config.api_key.clone());
+    let prefer_node = config.credential_source == CredentialSource::Node;
+    let upstream = Upstream::new(config.base_url.clone(), config.api_key.clone(), prefer_node);
     let state = AppState::new(
         db,
         upstream,

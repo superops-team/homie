@@ -4,9 +4,10 @@
 
 把 Claude Code / Codex 登录凭证接入网关上游（Phase 1：Codex API-key 模式最小闭环）：
 
-- `homie-node` 新增受限 `credential.resolve`，按 profile 返回短期上游 token。
-- `homie-gateway` 新增可选 `credential_source`（`static` 默认 / `node`），经 node 动态解析，
-  失败回退静态 `upstream.api_key`。
+- `homie-node` 新增 `credentials` 模块，以库内嵌方式暴露 `resolve_default_codex_credential` /
+  `resolve_codex_api_key`，按 profile 返回短期上游 token。
+- `homie-gateway` 新增可选 `credential_source`（`static` 默认 / `node`），经库内嵌调用 node
+  凭证函数动态解析，失败回退静态 `upstream.api_key`。
 
 本变更不实现 Claude OAuth / Codex ChatGPT 登录 token 的 refresh（Phase 2），不改注入/虚拟 key/
 模型路由/策略。
@@ -19,19 +20,20 @@
 
 ## 3. 模块规划
 
-### M1: node 侧 `credential.resolve`（受限凭证解析）
+### M1: node 侧库内嵌凭证解析（受限凭证解析）
 
 职责：
 
-- `homie-node` 新增 `credential.resolve` 方法（入 `profile_id`，出 `{ kind, base_url, token }`）。
-- Phase 1 仅 `kind == codex_api_key`：读 `config_home/auth.json` 的 `OPENAI_API_KEY`。
-- 缺失/坏 JSON/非 API-key 模式 → `NotAuthenticated`；不暴露任意文件读取、不返回 refresh token。
+- `homie-node` 新增 `credentials` 模块，暴露 `resolve_default_codex_credential(paths)` /
+  `resolve_codex_api_key(paths, profile_id)`，出 `ResolvedCredential { kind, base_url, token }`。
+- Phase 1 仅 `kind == codex_api_key`：读 `accounts/codex/<profile_id>/auth.json` 的
+  `OPENAI_API_KEY`。
+- 缺失/坏 JSON/非 API-key 模式 → `NodeError::NotFound`；不暴露任意文件读取、不返回 refresh token。
 
 涉及：
 
-- `homie/crates/homie-proto/src/node.rs`（`NodeMethod`、请求/响应类型）
-- `homie/crates/homie-node/src/provider/`（解析 + `credential.resolve` 分发）
-- `homie/crates/homie-node/src/service.rs`（RPC 接线）
+- `homie/crates/homie-node/src/credentials.rs`（新模块）
+- `homie/crates/homie-node/src/lib.rs`（`pub mod credentials` + re-export）
 
 ### M2: gateway 侧可选凭证源 + 回退
 
@@ -39,14 +41,14 @@
 
 - `GatewayConfig` 增 `credential_source`（`#[serde(default)]` = `static`）。
 - `Upstream` 支持动态凭证解析器（trait/`enum`），`forward` 前解析当前 token。
-- `node` 模式：经 `NodeClient` 调 `credential.resolve`；失败回退 `upstream.api_key`；皆空返回
-  `503` 配置错误 body（无密钥）。
+- `node` 模式：库内嵌调用 `homie_node::credentials::resolve_default_codex_credential`；
+  失败回退 `upstream.api_key`；皆空返回配置错误（无密钥）。
 - token 仅内存、不进 SQLite/日志。
 
 涉及：
 
-- `homie/crates/homie-gateway/src/config.rs`、`upstream.rs`、`state.rs`、`routes.rs`
-- 新增 node 客户端依赖（复用 `homie-client` 或最小 `credential.resolve` 调用点）
+- `homie/crates/homie-gateway/src/config.rs`、`upstream.rs`、`main.rs`
+- `homie/crates/homie-gateway/Cargo.toml` 新增 `homie-node.workspace = true` 依赖
 
 ### M3: 测试 + 安全 + 证据
 
@@ -73,5 +75,5 @@
 | 风险 | 控制 |
 |---|---|
 | auth.json 私有格式易碎 | Phase 1 仅解析 `OPENAI_API_KEY` 字段，坏格式→NotAuthenticated，不 panic |
-| 网关引入 node 客户端依赖过重 | 复用 `homie-client` 最小调用面，`static` 模式零 node 依赖 |
+| 网关引入 node 依赖 | 库内嵌仅调用纯函数，`static` 模式不触发 node 凭证解析 |
 | 凭证泄露 | token 仅内存、审计去 token、单测断言无明文 |

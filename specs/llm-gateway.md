@@ -114,10 +114,13 @@ caller.
   dynamically from `homie-node` instead of a static key. The gateway never reads
   provider auth files directly; credential extraction/refresh is owned by
   `homie-node`.
-- `homie-node` exposes a restricted `credential.resolve` method. It returns only
-  a short-lived upstream token (`kind`, `base_url`, `token`) for a given account
-  profile. It never returns refresh tokens and never exposes arbitrary file
-  reads.
+- `homie-node` exposes library functions (`homie_node::credentials`) — a
+  restricted, in-process credential resolver: `resolve_default_codex_credential`
+  and `resolve_codex_api_key`. It returns only a short-lived upstream token
+  (`kind`, `base_url`, `token`) for a given account profile. It never returns
+  refresh tokens and never exposes arbitrary file reads. This is library
+  embedding, not a cross-process RPC; the gateway links `homie-node` as a crate
+  dependency.
 - Phase 1 resolves only the Codex API-key mode (`OPENAI_API_KEY` in the
   profile-scoped `config_home/auth.json`). Claude OAuth and Codex ChatGPT-login
   token refresh are Phase 2 and out of scope for this contract revision.

@@ -36,7 +36,11 @@ fn spawn(
     // Keep the tempdir alive for the lifetime of the harness by leaking it:
     // the DB connection stays open on the same file, so removal is safe anyway.
     std::mem::forget(dir);
-    let upstream = Upstream::new(upstream_base.to_owned(), "upstream-secret".to_owned());
+    let upstream = Upstream::new(
+        upstream_base.to_owned(),
+        "upstream-secret".to_owned(),
+        false,
+    );
     let state = AppState::new(db.clone(), upstream, master_key, models, policy);
     let app = homie_gateway::routes::router(state);
     Harness { db, app }

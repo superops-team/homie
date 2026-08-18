@@ -73,14 +73,15 @@ PRD3 `llm-gateway-model-routing`、PRD4 `llm-gateway-policy-quota` 均明确把�
 
 ### 1.5 关键设计决策
 
-#### 决策 A：node 新增受限 `credential.resolve`，作为唯一凭证解析入口
+#### 决策 A：homie-node 以库内嵌方式暴露受限凭证解析函数（唯一凭证解析入口）
 
-- 在 `homie-node` 新增一个受限 RPC（可复用 `provider.call` 通道，或新增专用 method），按
-  `profile_id` 返回 `{ kind, base_url, token }`。
+- 在 `homie-node` 新增 `credentials` 模块，暴露纯函数 `resolve_default_codex_credential(paths)`
+  与 `resolve_codex_api_key(paths, profile_id)`，返回 `ResolvedCredential { kind, base_url, token }`。
+  **库内嵌**：`homie-gateway` 直接以 Rust crate 依赖调用这些函数，不走跨进程 RPC。
 - `kind` 区分：`codex_api_key`（Phase 1）/ `codex_oauth`（Phase 2）/ `claude_oauth`（Phase 2）。
-- node **只返回短期/一次性 token**，不返回 refresh token；原始凭证永不离开 node。
-- `credential.resolve` 通过白名单严格限制：仅 `account/read`（探测模式）与新增的本地 auth
-  文件解析（不暴露任意文件读取）。
+- node **只返回短期/一次性 token**，不返回 refresh token；原始凭证永不离开 node 进程内边界。
+- 解析函数只读 `NodePaths` 下 `accounts/codex/<profile_id>/auth.json` 的 `OPENAI_API_KEY` 字段，
+  不暴露任意文件读取，不回显文件内容（失败仅返回 `NotFound`）。
 
 #### 决策 B：网关新增可选上游凭证源，静态 `api_key` 降级兜底
 
@@ -127,12 +128,14 @@ PRD3 `llm-gateway-model-routing`、PRD4 `llm-gateway-policy-quota` 均明确把�
 
 ## 3. 功能需求
 
-### FR-1: node 新增 `credential.resolve` 受限方法
+### FR-1: homie-node 新增库内嵌凭证解析函数
 
-- 入参 `{ profile_id }`，出参 `{ kind, base_url, token }`（或 `NotFound`/`NotAuthenticated`）。
-- `kind == codex_api_key` 时，从 `config_home/auth.json` 解析 `OPENAI_API_KEY`；
-  缺失/格式不符返回 `NotAuthenticated`。
-- 方法名进入白名单（`validate_codex_method` 扩展或新增独立校验），**不暴露任意文件读取**。
+- `homie-node::credentials` 暴露 `resolve_default_codex_credential(paths)` 与
+  `resolve_codex_api_key(paths, profile_id)`，返回 `ResolvedCredential { kind, base_url, token }`
+  （失败返回 `NodeError::NotFound`）。
+- `kind == codex_api_key` 时，从 `accounts/codex/<profile_id>/auth.json` 解析 `OPENAI_API_KEY`；
+  缺失/格式不符/非 API-key 模式返回 `NotFound`。
+- 只读单一已知路径下的 `OPENAI_API_KEY` 字段，**不暴露任意文件读取**；原始 token 不回显、不落盘。
 
 ### FR-2: 网关配置新增可选 `credential_source`
 
@@ -142,11 +145,12 @@ PRD3 `llm-gateway-model-routing`、PRD4 `llm-gateway-policy-quota` 均明确把�
 
 ### FR-3: 网关上游凭证解析与回退
 
-- `Upstream` 支持「动态凭证解析器」注入（trait 或 `enum`），在 `forward` 前解析当前 token。
-- `node` 模式：优先经 `NodeClient` 调 `credential.resolve`；失败回退 `upstream.api_key`；
-  两者皆不可用返回 `503` 配置错误 body（不含密钥）。
+- `Upstream` 增加 `prefer_node: bool`（由 `credential_source` 推导），`forward` 前经
+  `resolve_credential()` 解析当前 token。
+- `node` 模式：优先库内嵌调用 `homie_node::credentials::resolve_default_codex_credential`；
+  失败回退 `upstream.api_key`；两者皆不可用返回配置错误（映射为上游 502/503，不含密钥）。
 - `static` 模式：直接读 `upstream.api_key`（现状）。
-- 短期 token 仅内存缓存（进程内、带过期），不落盘。
+- 解析出的 token 仅用于本次请求内存，不落盘、不进日志、不进 SQLite。
 
 ### FR-4: 安全与审计
 

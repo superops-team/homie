@@ -12,6 +12,8 @@ use axum::{
     response::Response,
 };
 use futures_util::StreamExt;
+use homie_node::config::NodePaths;
+use homie_node::credentials::resolve_default_codex_credential;
 use reqwest::Client;
 
 type BoxError = Box<dyn Error + Send + Sync>;
@@ -20,6 +22,7 @@ type BoxError = Box<dyn Error + Send + Sync>;
 pub struct Upstream {
     base_url: String,
     api_key: String,
+    prefer_node: bool,
     client: Client,
 }
 
@@ -43,20 +46,39 @@ impl std::fmt::Display for UpstreamError {
 impl Error for UpstreamError {}
 
 impl Upstream {
-    pub fn new(base_url: String, api_key: String) -> Self {
+    pub fn new(base_url: String, api_key: String, prefer_node: bool) -> Self {
         Self {
             base_url,
             api_key,
+            prefer_node,
             client: Client::new(),
         }
     }
 
+    /// Resolve the `(base_url, api_key)` to use for a request. In `node` mode
+    /// the local Homie node credential is preferred, falling back to the
+    /// configured static key.
+    fn resolve_credential(&self) -> Result<(String, String), UpstreamError> {
+        if self.prefer_node
+            && let Ok(credential) = resolve_default_codex_credential(&NodePaths::discover())
+        {
+            return Ok((credential.base_url, credential.token));
+        }
+        if self.api_key.is_empty() {
+            return Err(UpstreamError(
+                "no upstream credential available (node resolve failed and no static key)".into(),
+            ));
+        }
+        Ok((self.base_url.clone(), self.api_key.clone()))
+    }
+
     pub async fn forward(&self, path: &str, body: Vec<u8>) -> Result<ForwardResult, UpstreamError> {
-        let url = format!("{}{}", self.base_url, path);
+        let (base_url, api_key) = self.resolve_credential()?;
+        let url = format!("{}{}", base_url, path);
         let resp = self
             .client
             .post(&url)
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
+            .header(header::AUTHORIZATION, format!("Bearer {}", api_key))
             .header(header::CONTENT_TYPE, "application/json")
             .body(body)
             .send()
@@ -139,5 +161,43 @@ mod tests {
     fn usage_absent_is_zero() {
         assert_eq!(extract_usage(br#"{"ok":true}"#), (0, 0));
         assert_eq!(extract_usage(b"not json"), (0, 0));
+    }
+
+    #[test]
+    fn static_mode_resolves_static_key() {
+        let upstream = Upstream::new(
+            "https://api.example.com/v1".into(),
+            "sk-static".into(),
+            false,
+        );
+        let (base, key) = upstream.resolve_credential().expect("resolve");
+        assert_eq!(base, "https://api.example.com/v1");
+        assert_eq!(key, "sk-static");
+    }
+
+    #[test]
+    fn node_mode_falls_back_to_static_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // SAFETY: tests run in the same process; these set a path that is
+        // only read synchronously by `NodePaths::discover` in this test.
+        unsafe { std::env::set_var("HOMIE_NODE_HOME", dir.path()) };
+        let upstream = Upstream::new(
+            "https://api.example.com/v1".into(),
+            "sk-fallback".into(),
+            true,
+        );
+        let (base, key) = upstream.resolve_credential().expect("resolve");
+        assert_eq!(base, "https://api.example.com/v1");
+        assert_eq!(key, "sk-fallback");
+    }
+
+    #[test]
+    fn node_mode_without_any_credential_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // SAFETY: tests run in the same process; these set a path that is
+        // only read synchronously by `NodePaths::discover` in this test.
+        unsafe { std::env::set_var("HOMIE_NODE_HOME", dir.path()) };
+        let upstream = Upstream::new("https://api.example.com/v1".into(), "".into(), true);
+        assert!(upstream.resolve_credential().is_err());
     }
 }
