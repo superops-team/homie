@@ -14,8 +14,8 @@ notes.
 | Root shell | `homie/crates/homie-app/src/root.rs` | top-level entity composition, global action routing, focus fallback |
 | Workbench layout | `homie/crates/homie-app/src/workbench.rs` | pure split and pane sizing policy |
 | Sidebar | `homie/crates/homie-app/src/sidebar/` | session/project navigation, selection, sidebar-specific popovers |
-| Terminal pane | `homie/crates/homie-app/src/terminal_pane.rs` | terminal rendering and input bridge |
-| Utility surfaces | `homie/crates/homie-app/src/surface_shell.rs` | history, worktrees, settings, remote host editor overlays |
+| Terminal pane | `homie/crates/homie-app/src/terminal_pane/` | terminal rendering and input bridge |
+| Utility surfaces | `homie/crates/homie-app/src/surface_shell/` | history, worktrees, settings, remote host editor overlays |
 | Inspector | `homie/crates/homie-app/src/inspector.rs` | artifact/review/code inspector surfaces |
 | Shared UI | `homie/crates/homie-ui/` | semantic tokens and reusable GPUI components |
 
