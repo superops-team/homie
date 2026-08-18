@@ -104,3 +104,28 @@ caller.
   SQLite; never in git, logs, or agent-visible config.
 - Gateway restart restores virtual keys from SQLite.
 - Port conflicts fail the gateway with a clear error; the port is configurable.
+
+## 11. Credential Source
+
+- `homie.local.json` may carry an optional `credentialSource` field; it is
+  `#[serde(default)]` and absent means `static` (read `upstream.apiKey`), fully
+  backward compatible.
+- `credentialSource: "node"` makes the gateway resolve the upstream credential
+  dynamically from `homie-node` instead of a static key. The gateway never reads
+  provider auth files directly; credential extraction/refresh is owned by
+  `homie-node`.
+- `homie-node` exposes a restricted `credential.resolve` method. It returns only
+  a short-lived upstream token (`kind`, `base_url`, `token`) for a given account
+  profile. It never returns refresh tokens and never exposes arbitrary file
+  reads.
+- Phase 1 resolves only the Codex API-key mode (`OPENAI_API_KEY` in the
+  profile-scoped `config_home/auth.json`). Claude OAuth and Codex ChatGPT-login
+  token refresh are Phase 2 and out of scope for this contract revision.
+- Resolved short-lived tokens are held in memory only: never written to SQLite,
+  never logged, never sent to managed agents.
+- Fallback semantics: when `credentialSource == "node"`, a failed resolve
+  (node unreachable, not authenticated, or unsupported mode) falls back to the
+  static `upstream.apiKey` if configured; otherwise the gateway returns a clear
+  `503` configuration-error body that leaks no key or account data.
+- Failed resolve attempts are recorded in `gateway_audit` with reason
+  `credential_resolve_failed` (no token material in the audit detail).
