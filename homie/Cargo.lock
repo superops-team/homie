@@ -2700,6 +2700,7 @@ dependencies = [
  "axum",
  "futures-util",
  "getrandom 0.4.3",
+ "homie-engine",
  "homie-usage",
  "http-body-util",
  "reqwest",

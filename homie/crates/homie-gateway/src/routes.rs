@@ -8,7 +8,7 @@ use axum::{
     http::StatusCode,
     middleware,
     response::{IntoResponse, Response},
-    routing::{delete, post},
+    routing::{delete, get, post},
 };
 use serde::Deserialize;
 
@@ -24,13 +24,21 @@ pub fn router(state: AppState) -> Router {
             require_master,
         ));
 
-    Router::new()
+    let api = Router::new()
         .route("/v1/responses", post(handle_responses))
         .route("/v1/messages", post(handle_messages))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
-        .layer(middleware::from_fn_with_state(state.clone(), authenticate))
+        .layer(middleware::from_fn_with_state(state.clone(), authenticate));
+
+    Router::new()
+        .route("/healthz", get(healthz))
+        .merge(api)
         .merge(admin)
         .with_state(state)
+}
+
+async fn healthz() -> &'static str {
+    "ok"
 }
 
 async fn handle_responses(

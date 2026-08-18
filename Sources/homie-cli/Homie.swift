@@ -23,6 +23,7 @@ struct Homie: AsyncParsableCommand {
             Session.self, Worktree.self, Artifacts.self, Events.self,
             Status.self, Ports.self, Forward.self,
             Hook.self, Notify.self, McpStdio.self, Doctor.self,
+            Config.self, Fix.self,
             McpTools.self, McpCall.self,
         ]
     )
@@ -247,8 +248,59 @@ struct Doctor: ParsableCommand {
             print("✗ state file missing at \(statePath)")
         }
 
-        if !daemonOK {
+        // 4-7. LLM gateway checks.
+        let gatewayOK = runGatewayChecks()
+
+        if !daemonOK || !gatewayOK {
             throw ExitCode.failure
         }
+    }
+
+    /// Checks the LLM gateway: reachability, upstream credentials, virtual-key
+    /// effectiveness, and agent routing. Returns false if any check fails.
+    private func runGatewayChecks() -> Bool {
+        let config = HomieConfigStore.read()
+        let listen = config?.gateway.listen ?? HomieConfigStore.defaultListen
+        let (host, port) = GatewayProbe.splitListen(listen)
+            ?? ("127.0.0.1", UInt16(7338))
+        var ok = true
+
+        // 4. Gateway reachability.
+        if GatewayProbe.gatewayRunning(host: host, port: port) {
+            print("✓ gateway reachable at \(host):\(port)")
+        } else {
+            print("✗ gateway not reachable at \(host):\(port)")
+            ok = false
+        }
+
+        // 5. Upstream credentials present.
+        let baseUrl = config?.upstream.baseUrl ?? ""
+        let apiKey = config?.upstream.apiKey ?? ""
+        if !baseUrl.isEmpty && !apiKey.isEmpty {
+            print("✓ upstream configured (\(baseUrl), apiKey \(HomieConfigStore.mask(apiKey)))")
+        } else {
+            print("✗ upstream credential missing (baseUrl or apiKey empty)")
+            ok = false
+        }
+
+        // 6. Virtual key effectiveness.
+        let keys = HomieConfigStore.virtualKeys()
+        if !keys.isEmpty {
+            print("✓ \(keys.count) virtual key(s) issued")
+        } else {
+            print("✗ no virtual keys issued (gateway not initialized)")
+            ok = false
+        }
+
+        // 7. Agent routing points at loopback gateway, not a public provider.
+        let loopback = host == "127.0.0.1" || host == "localhost" || host.hasPrefix("127.")
+        if loopback {
+            print("✓ agent routing points at local gateway (\(host):\(port))")
+        } else {
+            print("✗ gateway listen is not loopback (\(host):\(port)); agents may route to a public provider")
+            ok = false
+        }
+
+        return ok
     }
 }

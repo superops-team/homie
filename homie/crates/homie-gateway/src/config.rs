@@ -129,6 +129,30 @@ impl GatewayConfig {
     }
 }
 
+/// Read only the gateway listen address for the `inject` preview, defaulting
+/// to the loopback default when the file is absent, missing the field, or
+/// unparsable. The preview must work before upstream credentials are set.
+pub fn listen_or_default() -> SocketAddr {
+    #[derive(Deserialize)]
+    struct ListenOnly {
+        #[serde(default)]
+        gateway: GatewayListenOnly,
+    }
+    #[derive(Deserialize, Default)]
+    struct GatewayListenOnly {
+        #[serde(default = "default_listen")]
+        listen: String,
+    }
+    let fallback = || default_listen().parse().expect("default listen parses");
+    let Ok(bytes) = fs::read(config_path()) else {
+        return fallback();
+    };
+    serde_json::from_slice::<ListenOnly>(&bytes)
+        .ok()
+        .and_then(|l| l.gateway.listen.parse().ok())
+        .unwrap_or_else(fallback)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
