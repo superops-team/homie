@@ -19,6 +19,8 @@ pub struct GatewayConfig {
     pub base_url: String,
     pub api_key: String,
     pub master_key: Option<String>,
+    /// Per-agent upstream model map (`codex` / `claude` → model name). Optional.
+    pub models: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -26,10 +28,8 @@ pub struct GatewayConfig {
 struct FileConfig {
     gateway: GatewaySection,
     upstream: UpstreamSection,
-    /// Model mapping is owned by the CLI (child `llm-gateway-model-routing`);
-    /// the gateway MVP reads but does not use it.
+    /// Per-agent upstream model map (`codex` / `claude` → model name).
     #[serde(default)]
-    #[allow(dead_code)]
     models: BTreeMap<String, String>,
 }
 
@@ -125,6 +125,7 @@ impl GatewayConfig {
             base_url: base_url.to_owned(),
             api_key: file.upstream.api_key,
             master_key: file.gateway.master_key,
+            models: file.models,
         })
     }
 }
@@ -187,6 +188,27 @@ mod tests {
             models: BTreeMap::new(),
         };
         assert!(GatewayConfig::from_file(file).is_err());
+    }
+
+    #[test]
+    fn retains_models_map() {
+        let file = FileConfig {
+            gateway: GatewaySection {
+                listen: default_listen(),
+                master_key: Some("m".into()),
+            },
+            upstream: UpstreamSection {
+                base_url: "https://api.example.com/v1".into(),
+                api_key: "sk-x".into(),
+            },
+            models: BTreeMap::from([
+                ("codex".to_string(), "gpt-5.2-codex".to_string()),
+                ("claude".to_string(), "claude-sonnet-4-5".to_string()),
+            ]),
+        };
+        let cfg = GatewayConfig::from_file(file).expect("valid");
+        assert_eq!(cfg.models["codex"], "gpt-5.2-codex");
+        assert_eq!(cfg.models["claude"], "claude-sonnet-4-5");
     }
 
     #[test]

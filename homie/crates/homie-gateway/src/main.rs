@@ -52,7 +52,12 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let config = GatewayConfig::load(&config_path())?;
     let db = Db::open(&db_path())?;
     let upstream = Upstream::new(config.base_url.clone(), config.api_key.clone());
-    let state = AppState::new(db, upstream, config.master_key.clone());
+    let state = AppState::new(
+        db,
+        upstream,
+        config.master_key.clone(),
+        config.models.clone(),
+    );
 
     let listener = TcpListener::bind(config.listen).await?;
     eprintln!("homie-gateway listening on {}", config.listen);

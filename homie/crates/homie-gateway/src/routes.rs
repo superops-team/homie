@@ -63,8 +63,11 @@ async fn forward_and_record(
     path: &str,
     body: Bytes,
 ) -> Response {
-    let model = extract_model(&body);
-    match state.upstream.forward(path, body.to_vec()).await {
+    let routed = route_key(path)
+        .map(|key| apply_model_route(&state.models, key, body.as_ref()))
+        .unwrap_or_else(|| body.to_vec());
+    let model = extract_model(&routed);
+    match state.upstream.forward(path, routed).await {
         Ok(result) => {
             if let Caller::VirtualKey(id) = caller {
                 let _ = state
@@ -116,6 +119,37 @@ async fn delete_key(State(state): State<AppState>, Path(id): Path<String>) -> Re
     }
 }
 
+/// Route key: HTTP path → agent model-map key.
+fn route_key(path: &str) -> Option<&'static str> {
+    match path {
+        "/responses" => Some("codex"),
+        "/messages" => Some("claude"),
+        _ => None,
+    }
+}
+
+/// Rewrite the top-level `model` string when a configured mapping exists.
+/// Returns the body unchanged when the mapping is absent, the body is not
+/// JSON, or the top-level `model` is not a string.
+fn apply_model_route(
+    models: &std::collections::BTreeMap<String, String>,
+    key: &str,
+    body: &[u8],
+) -> Vec<u8> {
+    let Some(target) = models.get(key) else {
+        return body.to_vec();
+    };
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.to_vec();
+    };
+    if let Some(model) = value.as_object_mut().and_then(|obj| obj.get_mut("model"))
+        && model.is_string()
+    {
+        *model = serde_json::Value::String(target.clone());
+    }
+    serde_json::to_vec(&value).unwrap_or_else(|_| body.to_vec())
+}
+
 fn extract_model(body: &[u8]) -> String {
     serde_json::from_slice::<serde_json::Value>(body)
         .ok()
@@ -133,7 +167,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_model_from_body() {
+    fn route_key_maps_paths_to_agents() {
+        assert_eq!(route_key("/responses"), Some("codex"));
+        assert_eq!(route_key("/messages"), Some("claude"));
+        assert_eq!(route_key("/v1/responses"), None);
+        assert_eq!(route_key(""), None);
+    }
+
+    #[test]
+    fn apply_model_route_rewrites_when_configured() {
+        let models =
+            std::collections::BTreeMap::from([("codex".to_string(), "gpt-5.2-codex".to_string())]);
+        let body = br#"{"model":"gpt-5"}"#;
+        let rewritten = apply_model_route(&models, "codex", body);
+        let v: serde_json::Value = serde_json::from_slice(&rewritten).expect("json");
+        assert_eq!(v["model"], "gpt-5.2-codex");
+    }
+
+    #[test]
+    fn apply_model_route_passes_through_when_key_missing() {
+        let models = std::collections::BTreeMap::new();
+        let body = br#"{"model":"gpt-5"}"#;
+        assert_eq!(apply_model_route(&models, "codex", body), body);
+    }
+
+    #[test]
+    fn apply_model_route_passes_through_non_json() {
+        let models =
+            std::collections::BTreeMap::from([("codex".to_string(), "gpt-5.2-codex".to_string())]);
+        let body = b"not json";
+        assert_eq!(apply_model_route(&models, "codex", body), body);
+    }
+
+    #[test]
+    fn apply_model_route_passes_through_non_string_model() {
+        let models =
+            std::collections::BTreeMap::from([("codex".to_string(), "gpt-5.2-codex".to_string())]);
+        let body = br#"{"model":123}"#;
+        let rewritten = apply_model_route(&models, "codex", body);
+        let v: serde_json::Value = serde_json::from_slice(&rewritten).expect("json");
+        assert_eq!(v["model"], 123);
+    }
+
+    #[test]
+    fn extract_model_from_body() {
         assert_eq!(
             extract_model(br#"{"model":"gpt-5.2-codex"}"#),
             "gpt-5.2-codex"

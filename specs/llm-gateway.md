@@ -59,14 +59,27 @@ caller.
 - Upstream errors are surfaced with a sanitized body; no upstream key or full
   sensitive prompt is echoed into logs.
 
-## 7. Usage Contract
+## 7. Model Routing
+
+- `homie.local.json` carries an optional `models` map (`codex` / `claude` → upstream model
+  name). It is `#[serde(default)]`; absent or partial is valid.
+- Before forwarding, the gateway rewrites the request body's top-level `model` string by
+  route key: `POST /v1/responses` → `models["codex"]`, `POST /v1/messages` → `models["claude"]`.
+- Override semantics: rewrite only when the corresponding `models` entry exists; otherwise
+  pass the original `model` through unchanged. A non-JSON body or a missing/non-string
+  top-level `model` is passed through unchanged (never an error).
+- Usage recording uses the rewritten model, reflecting the model actually routed upstream.
+- The gateway is the single source of truth for model routing; spawn-time injection does not
+  separately set the model.
+
+## 8. Usage Contract
 
 - Each forwarded request records, per virtual key: `model`, `occurred_at`,
   `input_tokens`, `output_tokens` (estimated via `homie-usage::openai_estimate`
   when billed usage is absent).
 - Usage is local and append-only; it is estimates, never authoritative billing.
 
-## 8. Security And Recovery
+## 9. Security And Recovery
 
 - Upstream keys and virtual keys live only in local ignored files and local
   SQLite; never in git, logs, or agent-visible config.

@@ -10,6 +10,8 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use std::collections::BTreeMap;
+
 use homie_gateway::db::Db;
 use homie_gateway::state::AppState;
 use homie_gateway::upstream::Upstream;
@@ -22,14 +24,18 @@ struct Harness {
     app: axum::Router,
 }
 
-fn spawn(master_key: Option<String>, upstream_base: &str) -> Harness {
+fn spawn(
+    master_key: Option<String>,
+    upstream_base: &str,
+    models: BTreeMap<String, String>,
+) -> Harness {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = Db::open(&dir.path().join("gateway.sqlite3")).expect("open db");
     // Keep the tempdir alive for the lifetime of the harness by leaking it:
     // the DB connection stays open on the same file, so removal is safe anyway.
     std::mem::forget(dir);
     let upstream = Upstream::new(upstream_base.to_owned(), "upstream-secret".to_owned());
-    let state = AppState::new(db.clone(), upstream, master_key);
+    let state = AppState::new(db.clone(), upstream, master_key, models);
     let app = homie_gateway::routes::router(state);
     Harness { db, app }
 }
@@ -114,7 +120,7 @@ async fn responses_slice_records_usage_per_key() {
         r#"{"id":"r1","usage":{"input_tokens":12,"output_tokens":7}}"#,
     )
     .await;
-    let harness = spawn(Some(MASTER.into()), &server.uri());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
 
     let (id, key) = harness.create_key("codex").await;
     let (status, bytes) = harness
@@ -147,7 +153,7 @@ async fn messages_slice_uses_same_virtual_key() {
         r#"{"id":"m1","usage":{"input_tokens":3,"output_tokens":9}}"#,
     )
     .await;
-    let harness = spawn(Some(MASTER.into()), &server.uri());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
 
     let (id, key) = harness.create_key("claude").await;
     let (status, _) = harness
@@ -173,7 +179,7 @@ async fn bad_key_is_rejected_and_never_forwarded() {
     let server = MockServer::start().await;
     // No mock mounted: if the request were forwarded it would 404, but a bad
     // key must be rejected at the auth layer before any upstream call.
-    let harness = spawn(Some(MASTER.into()), &server.uri());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
 
     let (status, _) = harness
         .call("POST", "/v1/responses", "sk-bogus", r#"{"model":"m"}"#)
@@ -186,7 +192,7 @@ async fn bad_key_is_rejected_and_never_forwarded() {
 async fn revoked_key_returns_unauthorized() {
     let server = MockServer::start().await;
     upstream_at(&server, "/responses", r#"{"ok":true}"#).await;
-    let harness = spawn(Some(MASTER.into()), &server.uri());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
 
     let (id, key) = harness.create_key("temp").await;
     // Revoke via admin.
@@ -211,7 +217,7 @@ async fn master_key_is_accepted_but_not_usage_recorded() {
         r#"{"usage":{"input_tokens":1,"output_tokens":1}}"#,
     )
     .await;
-    let harness = spawn(Some(MASTER.into()), &server.uri());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
 
     let (status, _) = harness
         .call("POST", "/v1/responses", MASTER, r#"{"model":"m"}"#)
@@ -224,7 +230,7 @@ async fn master_key_is_accepted_but_not_usage_recorded() {
 #[tokio::test]
 async fn admin_requires_master_key() {
     let server = MockServer::start().await;
-    let harness = spawn(None, &server.uri());
+    let harness = spawn(None, &server.uri(), BTreeMap::new());
 
     // No master key configured → admin surface is closed (403).
     let (status, _) = harness.call("GET", "/admin/keys", "whatever", "").await;
@@ -234,10 +240,95 @@ async fn admin_requires_master_key() {
 #[tokio::test]
 async fn virtual_key_cannot_admin() {
     let server = MockServer::start().await;
-    let harness = spawn(Some(MASTER.into()), &server.uri());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
     let (_, key) = harness.create_key("codex").await;
 
     // A virtual key must not reach the admin surface (401).
     let (status, _) = harness.call("GET", "/admin/keys", &key, "").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn codex_model_is_rewritten_before_forward_and_recorded() {
+    let server = MockServer::start().await;
+    upstream_at(
+        &server,
+        "/responses",
+        r#"{"id":"r-route","usage":{"input_tokens":5,"output_tokens":2}}"#,
+    )
+    .await;
+    let models = BTreeMap::from([("codex".to_string(), "gpt-5.2-codex".to_string())]);
+    let harness = spawn(Some(MASTER.into()), &server.uri(), models);
+
+    let (id, key) = harness.create_key("codex").await;
+    let (status, _) = harness
+        .call(
+            "POST",
+            "/v1/responses",
+            &key,
+            r#"{"model":"gpt-5","input":"hello"}"#,
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let rows = harness.usage_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, id);
+    // The gateway must record the *rewritten* model, not the client-supplied one.
+    assert_eq!(rows[0].1, "gpt-5.2-codex");
+}
+
+#[tokio::test]
+async fn claude_model_is_rewritten_before_forward_and_recorded() {
+    let server = MockServer::start().await;
+    upstream_at(
+        &server,
+        "/messages",
+        r#"{"id":"m-route","usage":{"input_tokens":2,"output_tokens":8}}"#,
+    )
+    .await;
+    let models = BTreeMap::from([("claude".to_string(), "claude-sonnet-4".to_string())]);
+    let harness = spawn(Some(MASTER.into()), &server.uri(), models);
+
+    let (id, key) = harness.create_key("claude").await;
+    let (status, _) = harness
+        .call(
+            "POST",
+            "/v1/messages",
+            &key,
+            r#"{"model":"claude-3","messages":[]}"#,
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let rows = harness.usage_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, id);
+    assert_eq!(rows[0].1, "claude-sonnet-4");
+}
+
+#[tokio::test]
+async fn unconfigured_model_passes_through_unchanged() {
+    let server = MockServer::start().await;
+    upstream_at(
+        &server,
+        "/responses",
+        r#"{"id":"r-passthrough","usage":{"input_tokens":1,"output_tokens":1}}"#,
+    )
+    .await;
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
+
+    let (_, key) = harness.create_key("codex").await;
+    let (status, _) = harness
+        .call(
+            "POST",
+            "/v1/responses",
+            &key,
+            r#"{"model":"gpt-5","input":"hello"}"#,
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let rows = harness.usage_rows();
+    assert_eq!(rows[0].1, "gpt-5");
 }
