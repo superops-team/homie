@@ -21,6 +21,8 @@ pub struct GatewayConfig {
     pub master_key: Option<String>,
     /// Per-agent upstream model map (`codex` / `claude` → model name). Optional.
     pub models: BTreeMap<String, String>,
+    /// Optional gateway policy (rate limit / quota). `None` means no limits.
+    pub policy: Option<Policy>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -31,6 +33,9 @@ struct FileConfig {
     /// Per-agent upstream model map (`codex` / `claude` → model name).
     #[serde(default)]
     models: BTreeMap<String, String>,
+    /// Optional gateway policy. `None` means no limits.
+    #[serde(default)]
+    policy: Option<Policy>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -47,6 +52,28 @@ struct GatewaySection {
 struct UpstreamSection {
     base_url: String,
     api_key: String,
+}
+
+/// Optional gateway policy. `None` (or an empty `{}`) means no limits.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Policy {
+    #[serde(default)]
+    pub rate_limit: Option<RateLimit>,
+    #[serde(default)]
+    pub quota: Option<Quota>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimit {
+    pub requests_per_minute: u32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Quota {
+    pub daily_token_limit: u64,
 }
 
 fn default_listen() -> String {
@@ -126,6 +153,7 @@ impl GatewayConfig {
             api_key: file.upstream.api_key,
             master_key: file.gateway.master_key,
             models: file.models,
+            policy: file.policy,
         })
     }
 }
@@ -170,6 +198,7 @@ mod tests {
                 api_key: "".into(),
             },
             models: BTreeMap::new(),
+            policy: None,
         };
         assert!(GatewayConfig::from_file(file).is_err());
     }
@@ -186,6 +215,7 @@ mod tests {
                 api_key: "sk-x".into(),
             },
             models: BTreeMap::new(),
+            policy: None,
         };
         assert!(GatewayConfig::from_file(file).is_err());
     }
@@ -205,10 +235,56 @@ mod tests {
                 ("codex".to_string(), "gpt-5.2-codex".to_string()),
                 ("claude".to_string(), "claude-sonnet-4-5".to_string()),
             ]),
+            policy: None,
         };
         let cfg = GatewayConfig::from_file(file).expect("valid");
         assert_eq!(cfg.models["codex"], "gpt-5.2-codex");
         assert_eq!(cfg.models["claude"], "claude-sonnet-4-5");
+    }
+
+    #[test]
+    fn loads_policy_when_present() {
+        let file = FileConfig {
+            gateway: GatewaySection {
+                listen: default_listen(),
+                master_key: Some("m".into()),
+            },
+            upstream: UpstreamSection {
+                base_url: "https://api.example.com/v1".into(),
+                api_key: "sk-x".into(),
+            },
+            models: BTreeMap::new(),
+            policy: Some(Policy {
+                rate_limit: Some(RateLimit {
+                    requests_per_minute: 10,
+                }),
+                quota: Some(Quota {
+                    daily_token_limit: 100000,
+                }),
+            }),
+        };
+        let cfg = GatewayConfig::from_file(file).expect("valid");
+        let policy = cfg.policy.expect("policy");
+        assert_eq!(policy.rate_limit.unwrap().requests_per_minute, 10);
+        assert_eq!(policy.quota.unwrap().daily_token_limit, 100000);
+    }
+
+    #[test]
+    fn policy_defaults_to_none() {
+        let file = FileConfig {
+            gateway: GatewaySection {
+                listen: default_listen(),
+                master_key: Some("m".into()),
+            },
+            upstream: UpstreamSection {
+                base_url: "https://api.example.com/v1".into(),
+                api_key: "sk-x".into(),
+            },
+            models: BTreeMap::new(),
+            policy: None,
+        };
+        let cfg = GatewayConfig::from_file(file).expect("valid");
+        assert!(cfg.policy.is_none());
     }
 
     #[test]
@@ -223,6 +299,7 @@ mod tests {
                 api_key: "sk-x".into(),
             },
             models: BTreeMap::new(),
+            policy: None,
         };
         let cfg = GatewayConfig::from_file(file).expect("valid");
         assert_eq!(cfg.base_url, "https://api.example.com/v1");

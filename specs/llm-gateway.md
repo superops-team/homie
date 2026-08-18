@@ -79,7 +79,26 @@ caller.
   when billed usage is absent).
 - Usage is local and append-only; it is estimates, never authoritative billing.
 
-## 9. Security And Recovery
+## 9. Policy And Quota
+
+- `homie.local.json` carries an optional `policy` section; it is
+  `#[serde(default)]` and absent means no rate limiting or quota is applied
+  (backward compatible with existing deployments).
+- `policy.rate_limit.requests_per_minute` (per virtual key, minute-grained
+  sliding window) is enforced in-memory before forwarding. Exceeding it returns
+  `429` with a `rate_limit_error` body and does not forward upstream.
+- `policy.quota.daily_token_limit` (per virtual key, per natural day) is enforced
+  by aggregating `SUM(input_tokens + output_tokens)` over `gateway_usage`.
+  Exceeding it returns `429` with a `quota_error` body and does not forward.
+- A value of `0` for `daily_token_limit` or `requests_per_minute` is treated as
+  "not configured" (no enforcement), avoiding accidental total lockout.
+- Denied requests are recorded in a local `gateway_audit` table (event, key_id,
+  occurred_at, reason); they are not written to `gateway_usage`, which records
+  only actually-forwarded requests.
+- Denial bodies and audit detail never contain the upstream key, master key,
+  raw virtual key, model, or sensitive prompt.
+
+## 10. Security And Recovery
 
 - Upstream keys and virtual keys live only in local ignored files and local
   SQLite; never in git, logs, or agent-visible config.

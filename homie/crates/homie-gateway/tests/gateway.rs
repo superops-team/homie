@@ -12,6 +12,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use std::collections::BTreeMap;
 
+use homie_gateway::config::{Policy, Quota, RateLimit};
 use homie_gateway::db::Db;
 use homie_gateway::state::AppState;
 use homie_gateway::upstream::Upstream;
@@ -28,6 +29,7 @@ fn spawn(
     master_key: Option<String>,
     upstream_base: &str,
     models: BTreeMap<String, String>,
+    policy: Option<Policy>,
 ) -> Harness {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = Db::open(&dir.path().join("gateway.sqlite3")).expect("open db");
@@ -35,7 +37,7 @@ fn spawn(
     // the DB connection stays open on the same file, so removal is safe anyway.
     std::mem::forget(dir);
     let upstream = Upstream::new(upstream_base.to_owned(), "upstream-secret".to_owned());
-    let state = AppState::new(db.clone(), upstream, master_key, models);
+    let state = AppState::new(db.clone(), upstream, master_key, models, policy);
     let app = homie_gateway::routes::router(state);
     Harness { db, app }
 }
@@ -120,7 +122,7 @@ async fn responses_slice_records_usage_per_key() {
         r#"{"id":"r1","usage":{"input_tokens":12,"output_tokens":7}}"#,
     )
     .await;
-    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
     let (id, key) = harness.create_key("codex").await;
     let (status, bytes) = harness
@@ -153,7 +155,7 @@ async fn messages_slice_uses_same_virtual_key() {
         r#"{"id":"m1","usage":{"input_tokens":3,"output_tokens":9}}"#,
     )
     .await;
-    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
     let (id, key) = harness.create_key("claude").await;
     let (status, _) = harness
@@ -179,7 +181,7 @@ async fn bad_key_is_rejected_and_never_forwarded() {
     let server = MockServer::start().await;
     // No mock mounted: if the request were forwarded it would 404, but a bad
     // key must be rejected at the auth layer before any upstream call.
-    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
     let (status, _) = harness
         .call("POST", "/v1/responses", "sk-bogus", r#"{"model":"m"}"#)
@@ -192,7 +194,7 @@ async fn bad_key_is_rejected_and_never_forwarded() {
 async fn revoked_key_returns_unauthorized() {
     let server = MockServer::start().await;
     upstream_at(&server, "/responses", r#"{"ok":true}"#).await;
-    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
     let (id, key) = harness.create_key("temp").await;
     // Revoke via admin.
@@ -217,7 +219,7 @@ async fn master_key_is_accepted_but_not_usage_recorded() {
         r#"{"usage":{"input_tokens":1,"output_tokens":1}}"#,
     )
     .await;
-    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
     let (status, _) = harness
         .call("POST", "/v1/responses", MASTER, r#"{"model":"m"}"#)
@@ -230,7 +232,7 @@ async fn master_key_is_accepted_but_not_usage_recorded() {
 #[tokio::test]
 async fn admin_requires_master_key() {
     let server = MockServer::start().await;
-    let harness = spawn(None, &server.uri(), BTreeMap::new());
+    let harness = spawn(None, &server.uri(), BTreeMap::new(), None);
 
     // No master key configured → admin surface is closed (403).
     let (status, _) = harness.call("GET", "/admin/keys", "whatever", "").await;
@@ -240,7 +242,7 @@ async fn admin_requires_master_key() {
 #[tokio::test]
 async fn virtual_key_cannot_admin() {
     let server = MockServer::start().await;
-    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
     let (_, key) = harness.create_key("codex").await;
 
     // A virtual key must not reach the admin surface (401).
@@ -258,7 +260,7 @@ async fn codex_model_is_rewritten_before_forward_and_recorded() {
     )
     .await;
     let models = BTreeMap::from([("codex".to_string(), "gpt-5.2-codex".to_string())]);
-    let harness = spawn(Some(MASTER.into()), &server.uri(), models);
+    let harness = spawn(Some(MASTER.into()), &server.uri(), models, None);
 
     let (id, key) = harness.create_key("codex").await;
     let (status, _) = harness
@@ -288,7 +290,7 @@ async fn claude_model_is_rewritten_before_forward_and_recorded() {
     )
     .await;
     let models = BTreeMap::from([("claude".to_string(), "claude-sonnet-4".to_string())]);
-    let harness = spawn(Some(MASTER.into()), &server.uri(), models);
+    let harness = spawn(Some(MASTER.into()), &server.uri(), models, None);
 
     let (id, key) = harness.create_key("claude").await;
     let (status, _) = harness
@@ -316,7 +318,7 @@ async fn unconfigured_model_passes_through_unchanged() {
         r#"{"id":"r-passthrough","usage":{"input_tokens":1,"output_tokens":1}}"#,
     )
     .await;
-    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new());
+    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
     let (_, key) = harness.create_key("codex").await;
     let (status, _) = harness
@@ -331,4 +333,118 @@ async fn unconfigured_model_passes_through_unchanged() {
     assert_eq!(status, StatusCode::OK);
     let rows = harness.usage_rows();
     assert_eq!(rows[0].1, "gpt-5");
+}
+
+#[tokio::test]
+async fn rate_limit_rejects_excess_requests() {
+    let server = MockServer::start().await;
+    upstream_at(
+        &server,
+        "/responses",
+        r#"{"id":"r-rl","usage":{"input_tokens":1,"output_tokens":1}}"#,
+    )
+    .await;
+    let policy = Policy {
+        rate_limit: Some(RateLimit {
+            requests_per_minute: 1,
+        }),
+        quota: None,
+    };
+    let harness = spawn(
+        Some(MASTER.into()),
+        &server.uri(),
+        BTreeMap::new(),
+        Some(policy),
+    );
+
+    let (_, key) = harness.create_key("codex").await;
+    let (status, _) = harness
+        .call("POST", "/v1/responses", &key, r#"{"model":"gpt-5"}"#)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, bytes) = harness
+        .call("POST", "/v1/responses", &key, r#"{"model":"gpt-5"}"#)
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["type"], "rate_limit_error");
+
+    // Only the first (allowed) request is forwarded and recorded.
+    let rows = harness.usage_rows();
+    assert_eq!(rows.len(), 1);
+}
+
+#[tokio::test]
+async fn quota_rejects_when_daily_limit_exceeded() {
+    let server = MockServer::start().await;
+    upstream_at(
+        &server,
+        "/responses",
+        r#"{"id":"r-quota","usage":{"input_tokens":5,"output_tokens":5}}"#,
+    )
+    .await;
+    let policy = Policy {
+        rate_limit: None,
+        quota: Some(Quota {
+            daily_token_limit: 10,
+        }),
+    };
+    let harness = spawn(
+        Some(MASTER.into()),
+        &server.uri(),
+        BTreeMap::new(),
+        Some(policy),
+    );
+
+    let (_, key) = harness.create_key("codex").await;
+    // First request records 5 + 5 = 10 tokens.
+    let (status, _) = harness
+        .call("POST", "/v1/responses", &key, r#"{"model":"gpt-5"}"#)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Second request: cumulative 10 is not below limit 10 → 429.
+    let (status, bytes) = harness
+        .call("POST", "/v1/responses", &key, r#"{"model":"gpt-5"}"#)
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["type"], "quota_error");
+
+    // Only the first request is recorded in usage.
+    assert_eq!(harness.usage_rows().len(), 1);
+}
+
+#[tokio::test]
+async fn master_key_bypasses_policy() {
+    let server = MockServer::start().await;
+    upstream_at(
+        &server,
+        "/responses",
+        r#"{"id":"r-master","usage":{"input_tokens":1,"output_tokens":1}}"#,
+    )
+    .await;
+    let policy = Policy {
+        rate_limit: Some(RateLimit {
+            requests_per_minute: 1,
+        }),
+        quota: None,
+    };
+    let harness = spawn(
+        Some(MASTER.into()),
+        &server.uri(),
+        BTreeMap::new(),
+        Some(policy),
+    );
+
+    // Master key is not a virtual key, so rate limiting must not apply.
+    let (status, _) = harness
+        .call("POST", "/v1/responses", MASTER, r#"{"model":"m"}"#)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = harness
+        .call("POST", "/v1/responses", MASTER, r#"{"model":"m"}"#)
+        .await;
+    assert_eq!(status, StatusCode::OK);
 }

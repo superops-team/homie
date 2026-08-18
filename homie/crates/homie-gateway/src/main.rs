@@ -57,6 +57,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         upstream,
         config.master_key.clone(),
         config.models.clone(),
+        config.policy.clone(),
     );
 
     let listener = TcpListener::bind(config.listen).await?;

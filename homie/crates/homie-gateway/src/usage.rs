@@ -33,6 +33,18 @@ impl UsageStore {
         )?;
         Ok(())
     }
+
+    /// Sum of `input_tokens + output_tokens` for a key since `since` (inclusive),
+    /// used by the daily quota check.
+    pub fn sum_tokens_since(&self, key_id: &str, since: i64) -> rusqlite::Result<i64> {
+        let conn = self.db.conn();
+        conn.query_row(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
+             FROM gateway_usage WHERE key_id = ?1 AND occurred_at >= ?2",
+            rusqlite::params![key_id, since],
+            |row| row.get(0),
+        )
+    }
 }
 
 fn now_seconds() -> i64 {

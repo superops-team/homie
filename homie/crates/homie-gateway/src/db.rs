@@ -34,7 +34,14 @@ impl Db {
                 input_tokens  INTEGER NOT NULL,
                 output_tokens INTEGER NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_usage_key ON gateway_usage(key_id);",
+            CREATE INDEX IF NOT EXISTS idx_usage_key ON gateway_usage(key_id);
+            CREATE TABLE IF NOT EXISTS gateway_audit (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_id      TEXT NOT NULL,
+                event       TEXT NOT NULL,
+                occurred_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_key ON gateway_audit(key_id);",
         )?;
         Ok(Self {
             inner: Arc::new(Mutex::new(conn)),
@@ -59,6 +66,12 @@ impl Db {
                 occurred_at   INTEGER NOT NULL,
                 input_tokens  INTEGER NOT NULL,
                 output_tokens INTEGER NOT NULL
+            );
+            CREATE TABLE gateway_audit (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_id      TEXT NOT NULL,
+                event       TEXT NOT NULL,
+                occurred_at INTEGER NOT NULL
             );",
         )?;
         Ok(Self {

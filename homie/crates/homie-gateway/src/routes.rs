@@ -13,6 +13,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::auth::{Caller, authenticate, require_master};
+use crate::policy::{DenyReason, QuotaChecker, deny_response, now_seconds, record_audit};
 use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -67,6 +68,15 @@ async fn forward_and_record(
         .map(|key| apply_model_route(&state.models, key, body.as_ref()))
         .unwrap_or_else(|| body.to_vec());
     let model = extract_model(&routed);
+
+    // Enforce policy only for virtual keys (the master key is the trusted admin
+    // surface and is not rate-limited or quota-counted).
+    if let Caller::VirtualKey(key_id) = caller
+        && let Some(deny) = check_policy(state, key_id)
+    {
+        return deny;
+    }
+
     match state.upstream.forward(path, routed).await {
         Ok(result) => {
             if let Caller::VirtualKey(id) = caller {
@@ -78,6 +88,45 @@ async fn forward_and_record(
         }
         Err(_) => (StatusCode::BAD_GATEWAY, "bad gateway").into_response(),
     }
+}
+
+/// Apply rate-limit then quota checks. Returns a `429` response when either
+/// denies, recording the denial in `gateway_audit`.
+fn check_policy(state: &AppState, key_id: &str) -> Option<Response> {
+    let Some(policy) = &state.policy else {
+        return None;
+    };
+    let now = now_seconds();
+
+    if let Some(rate_limit) = &policy.rate_limit {
+        let allowed = state
+            .rate_limiter
+            .lock()
+            .expect("rate limiter mutex poisoned")
+            .allow(key_id, rate_limit.requests_per_minute, now);
+        if !allowed {
+            let _ = record_audit(&state.db, key_id, "rate_limited", now);
+            return Some(deny_response(DenyReason::RateLimit));
+        }
+    }
+
+    if let Some(quota) = &policy.quota {
+        let checker = QuotaChecker::new(&state.usage);
+        match checker.allow(key_id, quota.daily_token_limit, now) {
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = record_audit(&state.db, key_id, "quota_exceeded", now);
+                return Some(deny_response(DenyReason::Quota));
+            }
+            Err(_) => {
+                return Some(
+                    (StatusCode::INTERNAL_SERVER_ERROR, "quota check failed").into_response(),
+                );
+            }
+        }
+    }
+
+    None
 }
 
 #[derive(Deserialize)]
