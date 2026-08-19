@@ -86,7 +86,6 @@ pub enum RemoteCapability {
     /// Uploaded Helper can activate itself without replacing different bytes.
     AtomicActivation,
     AgentEvents,
-    McpStdio,
     ResourceInspect,
     PortForward,
     RebootRecovery,
@@ -113,7 +112,6 @@ impl RemoteCapability {
             Self::PersistenceProbe => "persistence-probe",
             Self::AtomicActivation => "atomic-activation",
             Self::AgentEvents => "agent-events",
-            Self::McpStdio => "mcp-stdio",
             Self::ResourceInspect => "resource-inspect",
             Self::PortForward => "port-forward",
             Self::RebootRecovery => "reboot-recovery",
