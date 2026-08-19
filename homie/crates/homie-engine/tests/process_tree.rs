@@ -91,7 +91,6 @@ fn sigstop_converges_and_sigcont_resumes() {
     let resumed = signal(root, libc::SIGCONT);
     assert!(!resumed.is_empty(), "SIGCONT should have resumed the tree");
 
-
     kill_tree(root);
     let _ = child.wait();
 }

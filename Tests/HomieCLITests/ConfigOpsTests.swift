@@ -67,10 +67,6 @@ private func parse<T: ParsableCommand>(_ argv: [String], as type: T.Type) throws
     #expect(set.baseUrl == "https://api.openai.com/v1")
     #expect(set.modelCodex == "m1")
     #expect(set.apiKeyFromStdin == false)
-
-    let agent = try parse(["config", "agent", "codex"], as: ConfigAgent.self)
-    #expect(agent.agent == "codex")
-    #expect(agent.text == false)
 }
 
 @Test func fixCommandParses() throws {

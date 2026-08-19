@@ -274,12 +274,17 @@ export CARGO_TARGET_DIR="${target_dir}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.0}"
 export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-${target_dir}/clang-module-cache}"
 
+# Enter the workspace before preflight so `rustup target list --installed`
+# resolves the toolchain pinned by homie/rust-toolchain.toml, not the runner
+# default. The CI "Install universal targets" step installs the slices under
+# that pinned toolchain; checking the wrong toolchain makes preflight report
+# every universal target as missing and the package step fails before building.
+cd "${workspace_dir}"
+
 run_preflight
 if [[ "${phase}" == "preflight" ]]; then
     exit 0
 fi
-
-cd "${workspace_dir}"
 
 echo "==> Building homie for Apple silicon"
 cargo build --release --package homie-app --bin homie --target aarch64-apple-darwin

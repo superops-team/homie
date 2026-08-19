@@ -57,13 +57,13 @@ impl PersistenceStore for JsonEnvelopeStore {
     fn save_project(&self, project: serde_json::Value) -> std::io::Result<()> {
         let mut state = self.load_state()?;
         let id = project.get("id").and_then(serde_json::Value::as_str);
-        if let Some(id) = id {
-            if let Some(existing) = state.projects.iter_mut().find(|candidate| {
+        if let Some(id) = id
+            && let Some(existing) = state.projects.iter_mut().find(|candidate| {
                 candidate.get("id").and_then(serde_json::Value::as_str) == Some(id)
-            }) {
-                *existing = project;
-                return self.write_state(&state);
-            }
+            })
+        {
+            *existing = project;
+            return self.write_state(&state);
         }
         state.projects.push(project);
         self.write_state(&state)
@@ -157,13 +157,13 @@ impl PersistenceStore for SplitJsonStore {
     fn save_project(&self, project: serde_json::Value) -> std::io::Result<()> {
         let mut projects = self.load_projects()?;
         let id = project.get("id").and_then(serde_json::Value::as_str);
-        if let Some(id) = id {
-            if let Some(existing) = projects.iter_mut().find(|candidate| {
+        if let Some(id) = id
+            && let Some(existing) = projects.iter_mut().find(|candidate| {
                 candidate.get("id").and_then(serde_json::Value::as_str) == Some(id)
-            }) {
-                *existing = project;
-                return write_json_atomic(&self.projects_file(), &projects);
-            }
+            })
+        {
+            *existing = project;
+            return write_json_atomic(&self.projects_file(), &projects);
         }
         projects.push(project);
         write_json_atomic(&self.projects_file(), &projects)

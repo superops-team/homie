@@ -124,34 +124,31 @@ impl AcpHost {
         let pending_for_reader = Arc::clone(&pending);
         let reader_handle = std::thread::spawn(move || {
             let mut reader = reader;
-            loop {
-                match frame::read_line(&mut reader) {
-                    Ok(Some(line)) => match classify_inbound(&line) {
-                        Ok(InboundMessage::Response(resp)) => {
-                            let tx = pending_for_reader
-                                .lock()
-                                .expect("pending lock")
-                                .remove(&resp.id);
-                            if let Some(tx) = tx {
-                                let _ = tx.send(PendingResult {
-                                    result: resp.result,
-                                    error: resp.error,
-                                });
-                            }
+            while let Ok(Some(line)) = frame::read_line(&mut reader) {
+                match classify_inbound(&line) {
+                    Ok(InboundMessage::Response(resp)) => {
+                        let tx = pending_for_reader
+                            .lock()
+                            .expect("pending lock")
+                            .remove(&resp.id);
+                        if let Some(tx) = tx {
+                            let _ = tx.send(PendingResult {
+                                result: resp.result,
+                                error: resp.error,
+                            });
                         }
-                        Ok(InboundMessage::Notification(notif)) => {
-                            let _ = notif_tx.send(notif);
-                        }
-                        Ok(InboundMessage::Request(_)) => {
-                            // Server-initiated requests (e.g. fs/read_text_file)
-                            // are out of scope for this slice and are dropped.
-                        }
-                        Err(_) => {
-                            // Malformed frame: keep the loop alive rather than
-                            // crashing the whole host on one bad line.
-                        }
-                    },
-                    Ok(None) | Err(_) => break,
+                    }
+                    Ok(InboundMessage::Notification(notif)) => {
+                        let _ = notif_tx.send(notif);
+                    }
+                    Ok(InboundMessage::Request(_)) => {
+                        // Server-initiated requests (e.g. fs/read_text_file)
+                        // are out of scope for this slice and are dropped.
+                    }
+                    Err(_) => {
+                        // Malformed frame: keep the loop alive rather than
+                        // crashing the whole host on one bad line.
+                    }
                 }
             }
         });

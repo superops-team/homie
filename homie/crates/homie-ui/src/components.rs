@@ -22,6 +22,8 @@ pub enum ButtonSize {
     Toolbar,
 }
 
+type ClickHandler = Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static>;
+
 #[derive(IntoElement)]
 pub struct Button {
     id: SharedString,
@@ -30,7 +32,7 @@ pub struct Button {
     size: ButtonSize,
     disabled: bool,
     child: AnyElement,
-    on_click: Option<Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_click: Option<ClickHandler>,
 }
 
 impl Button {

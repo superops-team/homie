@@ -119,11 +119,11 @@ fn render_report(
         String::new(),
         format!("Summary: {summary}"),
     ];
-    if let Some(details) = arguments.get("details").and_then(Value::as_str) {
-        if !details.is_empty() {
-            lines.push(String::new());
-            lines.push(details.to_string());
-        }
+    if let Some(details) = arguments.get("details").and_then(Value::as_str)
+        && !details.is_empty()
+    {
+        lines.push(String::new());
+        lines.push(details.to_string());
     }
     for (title, key) in [
         ("Blockers", "blockers"),
@@ -539,8 +539,8 @@ impl ToolHost for RegistryHost {
                 let children: Vec<SessionRecord> = lineage
                     .children_of(&SessionId(caller.clone()))
                     .into_iter()
+                    .filter(|r| requested.is_empty() || requested.contains(&r.id.0))
                     .cloned()
-                    .filter(|r| requested.is_empty() || requested.iter().any(|x| *x == r.id.0))
                     .collect();
                 let items = children
                     .iter()

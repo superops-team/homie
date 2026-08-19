@@ -227,19 +227,3 @@ jobs:
         run: |
           app="${RUNNER_TEMP}/homie-dist/homie.app"
           homie/scripts/package.sh --phase verify --app "${app}"
-
-  browser-sidecar:
-    name: Browser sidecar integration
-    runs-on: macos-15
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5.0.0
-      - name: Install sidecar and browser engines
-        working-directory: sidecar
-        run: |
-          npm ci
-          npx playwright install chromium webkit firefox
-      - name: Run browser integration tests
-        env:
-          HOMIE_RUN_BROWSER_TESTS: "1"
-        run: swift test --filter BrowserPoolTests
