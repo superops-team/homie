@@ -63,3 +63,21 @@ surface*, not a replacement for the PTY/holder authority described above.
   supervision; those remain in the established engine layers.
 - This first slice does not wire `AcpDriver` into the `session.spawn` path;
   session-driver integration is a follow-up change.
+
+## 6. Session Implementation Structure
+
+The session runtime authority is implemented in
+`homie/crates/homie-engine/src/session/` split into cohesive submodules
+(`engine-session-runtime-split` change). The `Session` public type and its
+public method signatures are the durable surface; the submodule layout is an
+implementation detail and may be reorganized without changing this contract.
+
+| Submodule | Responsibility |
+|-----------|----------------|
+| `lifecycle.rs` | spawn/adopt/attach/resume/migrate + session spec structures |
+| `screen.rs` | screen/grid mirror, scrollback, `SessionView` construction |
+| `pty.rs` | `Transport` + PTY read/write/resize |
+| `status.rs` | status reducer: signal/hook/prompt folding |
+
+The authority, PTY environment, verification, and ACP boundary contracts in
+sections 2–5 are unchanged by that split.

@@ -400,7 +400,7 @@ impl ControlServer {
             pty.rows = rows.clamp(2, u16::MAX as i64) as u16;
         }
 
-        let token = random_session_token()?;
+        let token = crate::session::random_session_token()?;
         let launch = homie_proto::remote_pty::LaunchRequest {
             session_id: id.clone(),
             session_token: token,
@@ -809,6 +809,21 @@ impl ControlServer {
         })
     }
 
+    /// Bundles the launch-side dependencies the session domain needs to build
+    /// specs, so spawn/resume logic stays out of the transport layer.
+    fn launch_context(&self) -> crate::session::LaunchContext {
+        crate::session::LaunchContext {
+            inject_dir: self.injection.as_ref().map(|i| i.inject_dir.clone()),
+            cli_path: self.injection.as_ref().map(|i| i.cli_path.clone()),
+            mcp: self.injection.as_ref().and_then(|i| i.mcp.clone()),
+            socket_path: self.socket_path.clone(),
+            logs_dir: self.logs_dir.clone(),
+            holder: self.holder.clone(),
+            remote: self.remote.clone(),
+            remote_bindings: self.remote_bindings.clone(),
+        }
+    }
+
     /// Resolves a host id against `hosts.json`, read fresh each call so
     /// Settings edits apply without a daemon restart.
     pub(super) fn resolve_host(
@@ -1142,103 +1157,8 @@ impl ControlServer {
         &self,
         record: &homie_proto::SessionRecord,
     ) -> Result<crate::session::SessionSpec, ControlError> {
-        let manager = self
-            .remote
-            .as_ref()
-            .cloned()
-            .ok_or_else(crate::remote::transport_unavailable)?;
-        let binding_store = self.remote_bindings.clone().ok_or_else(|| {
-            ControlError::internal("owner-only remote binding store is unavailable")
-        })?;
-        let host_id = record
-            .host
-            .as_deref()
-            .ok_or_else(|| ControlError::bad_request("remote record has no host"))?;
-        let host = self.resolve_host(host_id)?;
-        let helper = manager.ensure_helper(&host).map_err(io_control_error)?;
-        let persistence = manager
-            .probe_persistence(&host, &helper)
-            .map_err(io_control_error)?;
-        let captured = manager
-            .capture_environment(
-                &helper,
-                &homie_proto::remote_pty::EnvironmentCaptureRequest {
-                    cwd: Some(record.cwd.clone()),
-                    timeout_millis: 10_000,
-                },
-            )
-            .map_err(io_control_error)?;
-        let cwd = PathBuf::from(&captured.cwd);
-        if !cwd.is_absolute() {
-            return Err(ControlError::internal(
-                "remote Helper returned a non-absolute cwd",
-            ));
-        }
-        let (descriptor, authority) = {
-            let registry = self.registry.lock().map_err(poisoned)?;
-            let engine = registry.engine();
-            let manifest = engine.manifest(record.kind.id()).ok_or_else(|| {
-                ControlError::not_found(format!("no manifest for agent {}", record.kind.id()))
-            })?;
-            let descriptor = manifest.agent.clone().unwrap_or_default();
-            let authority = descriptor.authority();
-            (descriptor, authority)
-        };
-        let mut launch_args = descriptor.spawn_args.clone();
-        launch_args.extend(
-            descriptor
-                .resume_args(record.agent_session_id.as_deref())
-                .ok_or_else(|| {
-                    ControlError::bad_request(format!(
-                        "agent {} does not support resume",
-                        record.kind.id()
-                    ))
-                })?,
-        );
-        let inherited = captured
-            .environment
-            .into_iter()
-            .map(|variable| (variable.name, variable.value));
-        let pty = descriptor
-            .remote_spawn_spec(&cwd, inherited, &launch_args)
-            .ok_or_else(|| {
-                ControlError::bad_request(format!("agent {} declares no binary", record.kind.id()))
-            })?;
-        let launch = homie_proto::remote_pty::LaunchRequest {
-            session_id: record.id.0.clone(),
-            session_token: random_session_token()?,
-            argv: pty.argv.clone(),
-            cwd: captured.cwd,
-            environment: pty
-                .env
-                .iter()
-                .map(
-                    |(name, value)| homie_proto::remote_pty::EnvironmentVariable {
-                        name: name.clone(),
-                        value: value.clone(),
-                    },
-                )
-                .collect(),
-            cols: pty.cols,
-            rows: pty.rows,
-            persistence,
-        };
-        Ok(crate::session::SessionSpec {
-            id: record.id.0.clone(),
-            pty,
-            manifest_id: record.kind.id().to_string(),
-            authority,
-            logs_dir: self.logs_dir.clone(),
-            holder: None,
-            remote: Some(crate::session::RemoteSessionSpec {
-                manager,
-                helper,
-                launch,
-                host_id: host.id,
-                binding_store,
-            }),
-            defer_launch: false,
-        })
+        let registry = self.registry.lock().map_err(poisoned)?;
+        crate::session::remote_resume_spec(&self.launch_context(), &registry, record)
     }
 
     /// Revives a conversation found in an agent's own history: a NEW record
@@ -1284,68 +1204,14 @@ impl ControlServer {
         cwd: &str,
         agent_session_id: Option<&str>,
     ) -> Result<crate::session::SessionSpec, ControlError> {
-        let engine = registry.engine();
-        let manifest = engine
-            .manifest(kind)
-            .ok_or_else(|| ControlError::not_found(format!("no manifest for agent {kind}")))?;
-        let descriptor = manifest.agent.clone().unwrap_or_default();
-        descriptor
-            .binary
-            .as_ref()
-            .ok_or_else(|| ControlError::bad_request(format!("agent {kind} declares no binary")))?;
-        let tail = descriptor.resume_args(agent_session_id).ok_or_else(|| {
-            ControlError::bad_request(format!("agent {kind} does not support resume"))
-        })?;
-
-        let mut launch_args = descriptor.spawn_args.clone();
-        launch_args.extend(tail);
-        if let Some(injection) = &self.injection {
-            // Only the appendable flag mechanisms replay on resume, exactly
-            // as in Swift: Codex's global `-c` overrides must precede the
-            // resume SUBCOMMAND and are deliberately not replayed.
-            let claude_only = crate::agent::InjectionSpec {
-                claude_hooks: descriptor.injection.claude_hooks,
-                claude_mcp: descriptor.injection.claude_mcp,
-                ..Default::default()
-            };
-            launch_args.extend(crate::inject::injection_args(
-                &claude_only,
-                &injection.inject_dir,
-                &injection.cli_path,
-                None,
-                injection.mcp.as_ref(),
-            ));
-        }
-
-        let inherited: Vec<(String, String)> = std::env::vars().collect();
-        let mut pty = descriptor
-            .spawn_spec(Path::new(cwd), inherited, &launch_args)
-            .ok_or_else(|| ControlError::internal("resume spec without a binary"))?;
-        if let Some(injection) = &self.injection {
-            pty.env
-                .push((crate::inject::SESSION_ID_ENV.into(), id.to_string()));
-            pty.env.push((
-                crate::inject::SOCKET_ENV.into(),
-                self.socket_path.to_string_lossy().into_owned(),
-            ));
-            pty.env.push((
-                crate::inject::CLI_ENV.into(),
-                injection.cli_path.to_string_lossy().into_owned(),
-            ));
-            if let Some(mcp) = injection.mcp.as_ref() {
-                pty.env.extend(crate::inject::mcp_env(mcp));
-            }
-        }
-        Ok(crate::session::SessionSpec {
-            id: id.to_string(),
-            pty,
-            manifest_id: kind.to_string(),
-            authority: descriptor.authority(),
-            logs_dir: self.logs_dir.clone(),
-            holder: self.holder.clone(),
-            remote: None,
-            defer_launch: true,
-        })
+        crate::session::resume_spec(
+            &self.launch_context(),
+            registry,
+            id,
+            kind,
+            cwd,
+            agent_session_id,
+        )
     }
 
     /// Pops the most recently closed session whose folder still exists and
@@ -1551,18 +1417,6 @@ impl ControlServer {
         );
         Ok(json!({}))
     }
-}
-
-fn random_session_token() -> Result<homie_proto::remote_pty::SessionToken, ControlError> {
-    let mut bytes = [0_u8; 32];
-    getrandom::fill(&mut bytes)
-        .map_err(|error| ControlError::internal(format!("secure random source failed: {error}")))?;
-    let encoded = bytes
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    homie_proto::remote_pty::SessionToken::new(encoded)
-        .map_err(|error| ControlError::internal(error.to_string()))
 }
 
 pub(crate) fn new_record(id: &str, kind: &str, cwd: &str) -> homie_proto::SessionRecord {
