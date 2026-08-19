@@ -230,13 +230,11 @@ app_bin_dir="${contents}/Resources/bin"
 if [[ "${full_bundle}" == "1" ]]; then
     echo "==> Building full development runtime (${profile})"
     cargo_build --package homie-engine --bin homied-rs --bin homie-holder --bin homie-ssh-askpass
-    cargo_build --package homie-mcp --bin homie-mcp
     swift build --package-path "${workspace_dir}/.." -c "${swift_configuration}" --product homie
     swift_bin_dir="$(swift build --package-path "${workspace_dir}/.." -c "${swift_configuration}" --show-bin-path)"
 
     mkdir -p "${app_bin_dir}"
     copy_executable "${swift_bin_dir}/homie" "${app_bin_dir}/homie"
-    copy_executable "${target_dir}/${profile}/homie-mcp" "${app_bin_dir}/homie-mcp"
     copy_executable "${target_dir}/${profile}/homied-rs" "${app_bin_dir}/homied-rs"
     copy_executable "${target_dir}/${profile}/homie-holder" "${app_bin_dir}/homie-holder"
     copy_executable "${target_dir}/${profile}/homie-ssh-askpass" "${app_bin_dir}/homie-ssh-askpass"

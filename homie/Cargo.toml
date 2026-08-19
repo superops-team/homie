@@ -5,7 +5,6 @@ members = [
     "crates/homie-engine",
     "crates/homie-gateway",
     "crates/homie-node",
-    "crates/homie-mcp",
     "crates/homie-proto",
     "crates/homie-pty",
     "crates/homie-remote",

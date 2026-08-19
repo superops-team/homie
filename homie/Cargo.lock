@@ -2718,13 +2718,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "homie-mcp"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "homie-node"
 version = "0.1.0"
 dependencies = [

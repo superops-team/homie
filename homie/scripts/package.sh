@@ -21,7 +21,6 @@ entitlements="${workspace_dir}/assets/homie.entitlements"
 target_dir="${CARGO_TARGET_DIR:-${workspace_dir}/target}"
 universal_dir="${target_dir}/universal-apple-darwin/release"
 universal_binary="${universal_dir}/homie"
-universal_mcp_binary="${universal_dir}/homie-mcp"
 universal_engine_binary="${universal_dir}/homied-rs"
 universal_holder_binary="${universal_dir}/homie-holder"
 universal_askpass_binary="${universal_dir}/homie-ssh-askpass"
@@ -145,7 +144,6 @@ verify_app() {
 
     require_exec "${contents}/MacOS/homie"
     require_exec "${bin_dir}/homie"
-    require_exec "${bin_dir}/homie-mcp"
     require_exec "${bin_dir}/homied-rs"
     require_exec "${bin_dir}/homie-holder"
     require_exec "${bin_dir}/homie-ssh-askpass"
@@ -285,11 +283,9 @@ cd "${workspace_dir}"
 
 echo "==> Building homie for Apple silicon"
 cargo build --release --package homie-app --bin homie --target aarch64-apple-darwin
-cargo build --release --package homie-mcp --bin homie-mcp --target aarch64-apple-darwin
 
 echo "==> Building homie for Intel"
 cargo build --release --package homie-app --bin homie --target x86_64-apple-darwin
-cargo build --release --package homie-mcp --bin homie-mcp --target x86_64-apple-darwin
 
 echo "==> Creating universal executable"
 mkdir -p "${universal_dir}" "${dist_dir}"
@@ -298,12 +294,6 @@ lipo -create \
     "${target_dir}/x86_64-apple-darwin/release/homie" \
     -output "${universal_binary}"
 lipo "${universal_binary}" -verify_arch arm64 x86_64
-lipo -create \
-    "${target_dir}/aarch64-apple-darwin/release/homie-mcp" \
-    "${target_dir}/x86_64-apple-darwin/release/homie-mcp" \
-    -output "${universal_mcp_binary}"
-lipo "${universal_mcp_binary}" -verify_arch arm64 x86_64
-
 echo "==> Assembling ${app_path} with cargo-packager"
 cargo packager \
     --release \
@@ -335,10 +325,9 @@ echo "==> Building the local automation CLI"
 swift build --package-path "${repo_root}" -c release --product homie
 daemon_bin="$(swift build --package-path "${repo_root}" -c release --show-bin-path)"
 app_bin_dir="${app_path}/Contents/Resources/bin"
-echo "==> Bundling CLI and lightweight MCP proxy into Resources/bin"
+echo "==> Bundling CLI into Resources/bin"
 mkdir -p "${app_bin_dir}"
 cp "${daemon_bin}/homie" "${app_bin_dir}/homie"
-cp "${universal_mcp_binary}" "${app_bin_dir}/homie-mcp"
 
 # The Rust Engine is the authoritative daemon launched by homie. The remote
 # Helper catalog below is consumed by this executable directly.
@@ -411,7 +400,6 @@ ts_flag=(--timestamp)
 [[ "${sign_id}" != "-" ]] && echo "==> Signing with: ${sign_id}"
 echo "==> Signing nested executables"
 codesign --force --options runtime "${ts_flag[@]}" --sign "${sign_id}" "${app_bin_dir}/homie"
-codesign --force --options runtime "${ts_flag[@]}" --sign "${sign_id}" "${app_bin_dir}/homie-mcp"
 codesign --force --options runtime "${ts_flag[@]}" --sign "${sign_id}" "${app_bin_dir}/homied-rs"
 codesign --force --options runtime "${ts_flag[@]}" --sign "${sign_id}" "${app_bin_dir}/homie-holder"
 codesign --force --options runtime "${ts_flag[@]}" --sign "${sign_id}" "${app_bin_dir}/homie-ssh-askpass"

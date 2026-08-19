@@ -26,26 +26,8 @@ private func parse<T: ParsableCommand>(_ argv: [String], as type: T.Type) throws
     #expect(throws: Never.self) { _ = try parse(["hook", "Stop"], as: Hook.self) }
     #expect(throws: Never.self) { _ = try parse(["notify", "{}"], as: Notify.self) }
     #expect(throws: Never.self) { _ = try parse(["doctor"], as: Doctor.self) }
-    #expect(throws: Never.self) { _ = try parse(["mcp-stdio"], as: McpStdio.self) }
-    #expect(throws: Never.self) { _ = try parse(["mcp-tools"], as: McpTools.self) }
-    #expect(throws: Never.self) {
-        _ = try parse(["mcp-call", "--tool", "list_agents"], as: McpCall.self)
-    }
 }
 
-@Test func legacyMcpCommandFindsTheSiblingProxy() throws {
-    let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("homie-cli-proxy-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = directory.appendingPathComponent("homie")
-    let proxy = directory.appendingPathComponent("homie-mcp")
-    FileManager.default.createFile(atPath: proxy.path, contents: Data())
-    #expect(McpStdio.standaloneProxyPath(nextTo: cli.path) == nil)
-
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: proxy.path)
-    #expect(McpStdio.standaloneProxyPath(nextTo: cli.path) == proxy.path)
-}
 
 @Test func bareResourceFallsBackToItsListAction() throws {
     #expect(throws: Never.self) { _ = try parse(["session"], as: SessionList.self) }

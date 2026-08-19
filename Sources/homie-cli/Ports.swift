@@ -1,6 +1,5 @@
 import ArgumentParser
 import HomieCore
-import HomieMCP
 import HomieProtocol
 import Foundation
 
@@ -26,7 +25,7 @@ struct Ports: ParsableCommand {
         if let host {
             let token = try resolvedToken()
             conn = try DaemonConn.connectTCP(host: host, port: port)
-            let hello = HelloParams(build: "homie-cli/\(McpServer.serverVersion)", token: token)
+            let hello = HelloParams(build: "homie-cli/\("0.1.0")", token: token)
             _ = try conn.request(Method.hello, params: hello)
         } else {
             conn = try DaemonConn.connect(path: socket)

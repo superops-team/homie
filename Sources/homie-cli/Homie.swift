@@ -1,7 +1,6 @@
 import ArgumentParser
 import Darwin
 import HomieCore
-import HomieMCP
 import HomieProtocol
 import Foundation
 
@@ -11,8 +10,8 @@ import Foundation
 /// surface — everything the MCP tools can do, plus the event stream, reachable
 /// from a shell. The flat commands below them are integration points that
 /// predate the grammar and are invoked by other programs, not by people:
-/// `hook`/`notify` are wired into the agents' own config files and `mcp-stdio`
-/// is spawned by MCP clients, so their argv is fixed by those contracts.
+/// `hook`/`notify` are wired into the agents' own config files, so their
+/// argv is fixed by those contracts.
 /// `status` stays as a top-level alias of `session list` for the same reason.
 @main
 struct Homie: AsyncParsableCommand {
@@ -22,9 +21,8 @@ struct Homie: AsyncParsableCommand {
         subcommands: [
             Session.self, Worktree.self, Artifacts.self, Events.self,
             Status.self, Ports.self, Forward.self,
-            Hook.self, Notify.self, McpStdio.self, Doctor.self,
+            Hook.self, Notify.self, Doctor.self,
             Config.self, Fix.self,
-            McpTools.self, McpCall.self,
         ]
     )
 }
@@ -102,88 +100,6 @@ struct Notify: ParsableCommand {
     }
 }
 
-// MARK: - mcp-stdio
-
-struct McpStdio: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "mcp-stdio",
-        abstract: "Run the Homie MCP server on stdio, proxying tools to the daemon."
-    )
-
-    func run() async {
-        Self.execStandaloneProxyIfAvailable()
-        let server = McpServer(tools: HomieMCPTools.all) { name, arguments in
-            // Run the synchronous daemon bridge off the cooperative pool so a
-            // long wait_for_agent never starves the executor.
-            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<JSONValue, Error>) in
-                Thread.detachNewThread {
-                    do {
-                        cont.resume(returning: try MCPBridge.handle(tool: name, args: arguments))
-                    } catch {
-                        cont.resume(throwing: error)
-                    }
-                }
-            }
-        }
-        await server.run()
-    }
-
-    /// Old agent configurations launch `homie mcp-stdio`. Preserve that argv
-    /// contract while replacing this Swift process in-place with the tiny Rust
-    /// frontend. Source checkouts without the proxy keep the original server.
-    static func standaloneProxyPath(nextTo executablePath: String) -> String? {
-        let proxy = URL(fileURLWithPath: executablePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("homie-mcp").path
-        return FileManager.default.isExecutableFile(atPath: proxy) ? proxy : nil
-    }
-
-    private static func execStandaloneProxyIfAvailable() {
-        guard let proxy = standaloneProxyPath(nextTo: CommandLine.arguments[0]),
-            let argument = strdup(proxy)
-        else { return }
-        defer { free(argument) }
-        proxy.withCString { path in
-            var arguments: [UnsafeMutablePointer<CChar>?] = [argument, nil]
-            arguments.withUnsafeMutableBufferPointer { buffer in
-                _ = execv(path, buffer.baseAddress!)
-            }
-        }
-        // execv returns only on failure; fall through to the Swift server.
-    }
-}
-
-/// One-shot metadata backend for the small Rust stdio process. Keeping the
-/// manifest-derived schemas here avoids duplicating the dynamic agent catalog.
-struct McpTools: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "mcp-tools")
-
-    func run() {
-        print(CLISupport.encodeCompact(HomieMCPTools.listResult))
-    }
-}
-
-/// One-shot tool backend for `homie-mcp`. The Swift runtime is paid only
-/// while a tool is actually executing (including long waits), not once per
-/// attached agent for the lifetime of the session.
-struct McpCall: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "mcp-call")
-
-    @Option var tool: String
-
-    func run() {
-        let input = CLISupport.readStdin(cap: 4 << 20, timeoutMs: 5_000)
-        let arguments = CLISupport.parsePayload(input)
-        let result: JSONValue
-        do {
-            result = .object(["ok": try MCPBridge.handle(tool: tool, args: arguments)])
-        } catch {
-            result = .object(["error": .string(String(describing: error))])
-        }
-        print(CLISupport.encodeCompact(result))
-    }
-}
-
 // MARK: - status
 
 /// Predates the resource grammar and is in people's muscle memory and scripts,
@@ -219,7 +135,7 @@ struct Doctor: ParsableCommand {
             do {
                 let conn = try DaemonConn.connect()
                 defer { conn.close() }
-                let params = HelloParams(build: "homie-cli/\(McpServer.serverVersion)")
+                let params = HelloParams(build: "homie-cli/0.1.0")
                 let result = try conn.request(Method.hello, params: params)
                 let hello = try result.decoded(as: HelloResult.self)
                 print("✓ daemon reachable (build \(hello.build), pid \(hello.pid), proto \(hello.proto))")

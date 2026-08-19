@@ -3,11 +3,11 @@
 //!
 //! Ported from the local half of `InjectionBuilder`. The daemon writes two
 //! files at startup — a Claude hooks settings file and a Claude MCP config —
-//! whose contents reference `$HOMIE_CLI` / the CLI's sibling `homie-mcp`,
-//! then appends per-launch flags (`--settings`, `--mcp-config`, Codex `-c`
-//! overrides) for whichever mechanisms the agent's manifest opted into. This
-//! is what makes a Claude session hook-driven rather than screen-detected,
-//! and what gives every agent the `homie` MCP tools.
+//! whose contents reference `$HOMIE_CLI` and the daemon's embedded HTTP MCP
+//! endpoint, then appends per-launch flags (`--settings`, `--mcp-config`,
+//! Codex `-c` overrides) for whichever mechanisms the agent's manifest opted
+//! into. This is what makes a Claude session hook-driven rather than
+//! screen-detected, and what gives every agent the `homie` MCP tools.
 
 use std::io;
 use std::path::{Path, PathBuf};

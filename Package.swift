@@ -21,13 +21,12 @@ let package = Package(
         // scripts/sync-agent-manifests.sh; do not hand-edit these resources.
         .target(name: "HomieCore", resources: [.copy("Resources/manifests")]),
         .target(name: "HomieProtocol", dependencies: ["HomieCore"]),
-        .target(name: "HomieMCP", dependencies: ["HomieProtocol", "HomieCore"]),
 
         // MARK: Executables
         .executableTarget(
             name: "homie-cli",
             dependencies: [
-                "HomieProtocol", "HomieCore", "HomieMCP",
+                "HomieProtocol", "HomieCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
