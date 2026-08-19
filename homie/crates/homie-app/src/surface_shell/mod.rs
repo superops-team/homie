@@ -68,8 +68,11 @@ enum SettingsMenu {
 
 mod host_editor;
 mod host_init;
+mod hosts_view;
 mod projection;
+mod settings_view;
 mod view;
+mod widgets;
 
 use host_editor::{HostEditor, HostFormField};
 use host_init::{
