@@ -36,21 +36,28 @@ child agents, and persisted state; everything else is a client or a narrow-purpo
 
 ```mermaid
 graph TD
-    App["homie (desktop app · GPUI)"] -->|"DaemonClient · Unix socket"| Daemon["homied-rs (Engine daemon)"]
-    CLI["homie CLI (Swift)"] -->|"DaemonClient · Unix socket"| Daemon
+    subgraph Clients["clients (foreground / on-demand)"]
+        App["homie (desktop · GPUI)"]
+        CLI["homie CLI (Swift)"]
+    end
+
+    Daemon["homied-rs (daemon · flock singleton)<br/>control socket + embedded LLM proxy"]
+
+    App -->|"DaemonClient · Unix socket"| Daemon
+    CLI -->|"DaemonClient · Unix socket"| Daemon
 
     Daemon -->|"spawn · PTY master"| Holder["homie-holder (--manager)"]
-    Holder -->|"spawn · injected argv/env"| Agent["agent (Claude Code / Codex / shell)"]
+    Holder -->|"spawn · injected argv/env"| Agent["agent<br/>(Claude Code / Codex / shell)"]
 
     Agent -->|"MCP stdio"| MCP["homie-mcp"]
-    MCP -->|"spawn"| CLI
-    CLI -->|"control socket"| Daemon
-
-    Daemon -->|"SSH remote PTY"| Remote["homie-remote (helper)"]
+    MCP -->|"spawn homie subcommand"| CLI
 
     Agent -->|"LLM request · virtual key"| Daemon
-    Daemon -->|"embedded LLM proxy · upstream forward"| Provider["OpenAI-compatible provider"]
-    Daemon -.->|"library-embedded credential resolve"| Node["homie-node (remote VPS service)"]
+    Daemon -->|"embedded LLM proxy → upstream"| Provider["OpenAI-compatible provider"]
+    Daemon -.->|"credential resolve<br/>(library-embedded)"| Node["homie-node (VPS)"]
+
+    Daemon -->|"SSH remote PTY"| Remote["homie-remote"]
+    Daemon -->|"encrypted node channel"| Node
 ```
 
 ### Process model
@@ -89,7 +96,7 @@ Key invariants:
 |-------|----------------|
 | `homie-app` | GPUI desktop app: window shell, sidebar, terminal, inspector, settings, usage UI |
 | `homie-ui` | shared GPUI visual tokens and reusable components |
-| `homie-engine` | daemon/runtime: session supervision, control protocol, holders, injection, remote spawn |
+| `homie-engine` | daemon/runtime: session supervision, control protocol, holders, injection, remote spawn, **embedded LLM proxy** |
 | `homie-client` | client API for the app/CLI to talk to the daemon (`DaemonClient`) and nodes (`NodeClient`) |
 | `homie-proto` | wire DTOs, control methods/events, paths, remote-PTY protocol |
 | `homie-term` | GPUI terminal rendering support |
@@ -105,12 +112,12 @@ Key invariants:
 Dependency direction (simplified):
 
 ```
-homie-app ─▶ homie-ui, homie-client
+homie-app ─▶ homie-ui, homie-client, homie-proto, homie-term, homie-updater, homie-usage
 homie-client ─▶ homie-proto
-homie-engine ─▶ homie-proto, homie-pty, homie-term, homie-terminal-state, homie-usage, homie-gateway (embedded LLM proxy)
+homie-engine ─▶ homie-proto, homie-pty, homie-terminal-state, homie-gateway (embedded LLM proxy)
 homie-node ─▶ homie-client, homie-proto
 homie-gateway ─▶ homie-usage, homie-node (credentials)
-homie-remote ─▶ homie-proto
+homie-remote ─▶ homie-engine, homie-proto, homie-pty, homie-terminal-state
 ```
 
 ### Swift package
@@ -163,7 +170,7 @@ sequenceDiagram
     App->>D: session.spawn {kind, cwd, argv?}
     D->>D: resolve manifest descriptor · optional worktree create
     D->>H: launch holder (PTY master)
-    D->>A: exec via holder with injected argv/env (hooks · MCP · gateway)
+    D->>A: exec via holder with injected argv/env (hooks · MCP · virtual key)
     A-->>D: hook.report (Claude) / screen detection (Codex)
     D-->>App: event session.updated {status}
 ```
