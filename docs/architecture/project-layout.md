@@ -28,7 +28,7 @@ worktree setup.
 |-------|----------------|
 | `homie-app` | GPUI desktop app, window shell, sidebar, terminal, inspector, settings and app UI orchestration |
 | `homie-ui` | Shared GPUI visual tokens and reusable UI components |
-| `homie-engine` | Local daemon/runtime, session supervision, control protocol serving |
+| `homie-engine` | Local daemon/runtime, session supervision, control protocol serving, embedded LLM proxy |
 | `homie-client` | Client API for app/CLI to talk to the daemon |
 | `homie-proto` | Rust protocol DTOs and paths |
 | `homie-term` | GPUI terminal rendering support |
@@ -39,7 +39,7 @@ worktree setup.
 | `homie-mcp` | MCP bridge binary |
 | `homie-updater` | Update/install support |
 | `homie-usage` | Usage domain types and helpers |
-| `homie-gateway` | Local LLM gateway: virtual keys, OpenAI/Anthropic-compatible proxy, upstream forwarding, per-key usage |
+| `homie-gateway` | LLM gateway library (virtual keys, OpenAI-compatible proxy, upstream forwarding, per-key usage); embedded in daemon, no standalone binary |
 
 ## 4. Swift Package
 
