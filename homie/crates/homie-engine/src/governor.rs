@@ -505,3 +505,81 @@ mod tests {
         assert!(memory >= 4 << 30, "at least 4 GiB: {memory}");
     }
 }
+
+#[cfg(test)]
+mod eligibility_tests {
+    use super::*;
+    use homie_proto::{
+        AgentKind, DateMillis, ProjectId, Resumability, SessionId, SessionRecord, TitleSource,
+    };
+
+    fn record(status: SessionStatus, pinned: bool, hibernated: bool) -> SessionRecord {
+        SessionRecord {
+            id: SessionId("s".into()),
+            kind: AgentKind::SHELL,
+            cwd: "/tmp".into(),
+            project_id: ProjectId("p".into()),
+            worktree_path: None,
+            git_branch: None,
+            title: "t".into(),
+            title_source: TitleSource::Placeholder,
+            agent_session_id: None,
+            transcript_path: None,
+            status,
+            needs_input: None,
+            resumability: Resumability::NotResumable,
+            parent: None,
+            created_at: DateMillis(1_000.0),
+            updated_at: DateMillis(2_000.0),
+            last_turn_completed_at: None,
+            last_seen_at: None,
+            pinned,
+            archived_at: None,
+            host: None,
+            remote_persistence: None,
+            hibernation: hibernated.then(|| homie_proto::HibernationInfo {
+                since: DateMillis(3_000.0),
+                reason: homie_proto::HibernationReason::Idle,
+                tree_pids: vec![],
+                tree_start_times: None,
+            }),
+            memory_bytes: None,
+            artifacts: None,
+            pull_requests: None,
+            listening_ports: None,
+            foreground_agent: None,
+        }
+    }
+
+    #[test]
+    fn idle_session_is_eligible_only_when_unattached_unpinned_unhibernated() {
+        // The happy path: Idle, unattended, unpinned, not already hibernated.
+        let eligible = record(SessionStatus::Idle, false, false);
+        assert!(idle_since(&eligible, false).is_some());
+
+        // Attended (a client is viewing it) → never eligible.
+        assert!(idle_since(&record(SessionStatus::Idle, false, false), true).is_none());
+
+        // Pinned → never eligible.
+        assert!(idle_since(&record(SessionStatus::Idle, true, false), false).is_none());
+
+        // Already hibernated → never re-eligible.
+        assert!(idle_since(&record(SessionStatus::Idle, false, true), false).is_none());
+    }
+
+    #[test]
+    fn non_idle_statuses_are_never_eligible() {
+        for status in [
+            SessionStatus::Starting,
+            SessionStatus::Working,
+            SessionStatus::NeedsInput(homie_proto::NeedsInputKind::Question),
+            SessionStatus::Unknown,
+        ] {
+            let record = record(status.clone(), false, false);
+            assert!(
+                idle_since(&record, false).is_none(),
+                "{status:?} must not be eligible"
+            );
+        }
+    }
+}
