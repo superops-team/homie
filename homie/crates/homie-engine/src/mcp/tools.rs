@@ -185,6 +185,103 @@ pub fn tool_definitions_for(kinds: &[String]) -> Vec<ToolDefinition> {
                 }
             }),
         ),
+        tool(
+            "summarize_children",
+            "Compact screen tails plus status and artifacts for the sessions you spawned, so you can \
+             synthesize their results in one call instead of reading each one's full output. Returns \
+             what each delegate actually printed; it does not interpret or conclude for you.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "session_ids": { "type": "array", "items": { "type": "string" }, "description": "Subset of your children. Default: all of them." },
+                    "rows": { "type": "number", "description": "Non-blank screen lines per child (max 60). Defaults to 14." }
+                }
+            }),
+        ),
+        tool(
+            "report_to_parent",
+            "Hand a STRUCTURED result back to the session that spawned you. Use this instead of \
+             send_prompt when you finish, stall, or need a decision from your delegator. Fails if this \
+             session has no parent.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "summary": { "type": "string", "description": "One-line result or status. Required." },
+                    "status": { "type": "string", "enum": ["update", "done", "blocked", "failed"], "description": "Default: update." },
+                    "details": { "type": "string", "description": "Anything the parent needs beyond the summary." },
+                    "blockers": { "type": "array", "items": { "type": "string" }, "description": "What is stopping you: missing context, approvals, broken deps." },
+                    "questions": { "type": "array", "items": { "type": "string" }, "description": "Decisions you need from the parent or user." },
+                    "next_steps": { "type": "array", "items": { "type": "string" }, "description": "Suggested follow-up work." },
+                    "changed_paths": { "type": "array", "items": { "type": "string" }, "description": "Files you created or modified." },
+                    "artifacts": { "type": "array", "items": { "type": "string" }, "description": "PR links, preview URLs, generated file paths." },
+                    "proof": { "type": "array", "items": { "type": "string" }, "description": "Commands run, tests passed, evidence the work is real." },
+                    "submit": { "type": "boolean", "description": "Press Enter after delivering (default true)." }
+                },
+                "required": ["summary"]
+            }),
+        ),
+        tool(
+            "get_artifacts",
+            "PR links, issues, preview URLs and ports captured from a session's output. PR artifacts \
+             carry live GitHub stats (state, review decision, mergeability, CI checks, comments) under \
+             a 'pr' key.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "The session id." }
+                },
+                "required": ["session_id"]
+            }),
+        ),
+        tool(
+            "browser",
+            "Drive a real browser isolated to THIS session: 'open' a URL, read the returned snapshot \
+             for element refs like @e1, act by ref, and read the fresh snapshot every action returns. \
+             'screenshot' saves a file and returns its path; 'console' shows page errors.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["open", "snapshot", "click", "fill", "type", "press", "hover", "select", "check", "scroll", "get", "wait", "screenshot", "console", "back", "close", "list"], "description": "open = navigate and snapshot; snapshot = re-read; click/fill/type/press/hover/select/check/scroll = act returning a fresh snapshot; get = read url|title|text|html|value|count; wait = for a selector/state/ms; screenshot = save image, return path; console = recent errors; back = history back; close = end browser; list = open browsers." },
+                    "url": { "type": "string", "description": "For open." },
+                    "ref": { "type": "string", "description": "Element handle from the last snapshot, e.g. e3 or @e3." },
+                    "selector": { "type": "string", "description": "CSS fallback for what a ref can't express." },
+                    "text": { "type": "string", "description": "For fill (replace) and type (keystrokes, append)." },
+                    "key": { "type": "string", "description": "For press, e.g. Enter, Tab, Escape." },
+                    "value": { "type": "string", "description": "For select (option value); for check pass \"false\" to uncheck." },
+                    "what": { "type": "string", "enum": ["url", "title", "text", "html", "value", "count"], "description": "For get." },
+                    "ms": { "type": "number", "description": "For wait: fixed delay in milliseconds." },
+                    "state": { "type": "string", "description": "For wait: load | domcontentloaded | networkidle, or an element state." },
+                    "direction": { "type": "string", "enum": ["up", "down", "left", "right"], "description": "For scroll without a ref/selector." },
+                    "amount": { "type": "number", "description": "Scroll distance in pixels (default 600), or console lines (default 50)." },
+                    "button": { "type": "string", "enum": ["left", "right", "middle"], "description": "For click." },
+                    "double": { "type": "boolean", "description": "Double-click." },
+                    "full": { "type": "boolean", "description": "snapshot: include headings and landmarks. screenshot: full page." },
+                    "annotate": { "type": "boolean", "description": "screenshot: label every ref in the image." },
+                    "engine": { "type": "string", "enum": ["chromium", "webkit", "firefox"], "description": "For open. Default chromium." },
+                    "profile": { "type": "string", "description": "For open: named profile persisting cookies and logins." }
+                },
+                "required": ["action"]
+            }),
+        ),
+        tool(
+            "test_run",
+            "Run a web feature test flow across real browser engines (chromium, webkit, firefox) via \
+             Homie's shared browser pool — no per-call browser spawn. Runs the whole flow in ONE call \
+             across engines in parallel, returning per-engine pass/fail with a compact accessibility \
+             snapshot, console errors, and a screenshot file path only on failure.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "The page to test, e.g. http://localhost:3000" },
+                    "engines": { "type": "array", "items": { "type": "string", "enum": ["chromium", "webkit", "firefox"] }, "description": "Engines to run across. Default: chromium only." },
+                    "steps": { "type": "array", "items": { "type": "object" }, "description": "Ordered one-key step objects (click/type/drag/select/assert/…)." },
+                    "observe": { "type": "string", "enum": ["a11y", "screenshot"], "description": "a11y (default) or screenshot-every-step." },
+                    "profile": { "type": "string", "description": "Named profile to persist cookies + localStorage across runs." },
+                    "auth": { "type": "object", "properties": { "cookies": { "type": "array", "items": { "type": "object" } }, "localStorage": { "type": "object" } }, "description": "Auth hand-off seeded into every engine before first navigation." }
+                },
+                "required": ["url", "steps"]
+            }),
+        ),
     ]
 }
 

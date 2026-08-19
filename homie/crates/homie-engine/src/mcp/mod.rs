@@ -1,8 +1,10 @@
 //! The MCP server agents use to orchestrate each other.
 //!
 //! Every session homie starts gets this wired in, which is how an agent can
-//! spawn a second agent, watch it, and read its output. The transport is the
-//! stdio one: newline-delimited JSON-RPC 2.0, no `Content-Length` framing.
+//! spawn a second agent, watch it, and read its output. The transport is
+//! MCP `streamable-http` (see [`http`]): the daemon serves `POST /mcp` on a
+//! loopback listener and every session connects over HTTP instead of spawning
+//! a stdio child.
 //!
 //! Message handling is pure — [`McpServer::handle`] takes a request value and
 //! returns an optional response value — so the whole protocol surface is
@@ -12,9 +14,11 @@
 //! Ported from the Swift `HomieMCP`.
 
 pub mod host;
+pub mod http;
 mod tools;
 
 pub use host::RegistryHost;
+pub use http::{McpRuntime, SESSION_HEADER, TOKEN_ENV};
 pub use tools::{ToolDefinition, tool_definitions, tool_definitions_for};
 
 use serde_json::{Value, json};

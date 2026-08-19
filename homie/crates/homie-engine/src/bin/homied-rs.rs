@@ -117,13 +117,22 @@ fn main() {
 
     let cli_path = exe_dir.join("homie");
     let gateway = start_gateway();
+    let inject_dir = app_support.join("inject");
+    let mcp = homie_engine::mcp::http::start(
+        Arc::clone(&registry),
+        logs_dir.clone(),
+        Some(holder.clone()),
+        engine.ids().into_iter().map(str::to_string).collect(),
+        &inject_dir,
+    );
     let mut server = ControlServer::new(Arc::clone(&registry), app_support.join("daemon.sock"))
         .with_logs_dir(&logs_dir)
         .with_holder(holder)
         .with_injection(InjectionConfig {
-            inject_dir: app_support.join("inject"),
+            inject_dir,
             cli_path,
             gateway,
+            mcp,
         });
     if let Some(remote) = remote_manager(&exe_dir, &app_support) {
         server = server.with_remote(remote);

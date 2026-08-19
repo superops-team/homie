@@ -167,6 +167,7 @@ impl ControlServer {
                     &injection.inject_dir,
                     &injection.cli_path,
                     gateway_runtime.as_ref(),
+                    injection.mcp.as_ref(),
                 ));
             }
         }
@@ -222,6 +223,9 @@ impl ControlServer {
                 if let Some(runtime) = &gateway_runtime {
                     pty.env
                         .extend(crate::inject::gateway_env(&descriptor.injection, runtime));
+                }
+                if let Some(mcp) = injection.mcp.as_ref() {
+                    pty.env.extend(crate::inject::mcp_env(mcp));
                 }
             }
             if let Some(uuid) = &agent_session_id {
@@ -1309,6 +1313,7 @@ impl ControlServer {
                 &injection.inject_dir,
                 &injection.cli_path,
                 None,
+                injection.mcp.as_ref(),
             ));
         }
 
@@ -1327,6 +1332,9 @@ impl ControlServer {
                 crate::inject::CLI_ENV.into(),
                 injection.cli_path.to_string_lossy().into_owned(),
             ));
+            if let Some(mcp) = injection.mcp.as_ref() {
+                pty.env.extend(crate::inject::mcp_env(mcp));
+            }
         }
         Ok(crate::session::SessionSpec {
             id: id.to_string(),

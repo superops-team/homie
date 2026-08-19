@@ -62,6 +62,10 @@ pub struct InjectionConfig {
     /// through the local gateway; the daemon mints a per-session virtual key
     /// at spawn via this issuer.
     pub gateway: Option<crate::inject::GatewayIssuer>,
+    /// When set, agents that opt into `codexMcp` / `claudeMcp` connect to the
+    /// daemon-embedded MCP `streamable-http` endpoint instead of spawning a
+    /// stdio child.
+    pub mcp: Option<crate::mcp::McpRuntime>,
 }
 
 impl ControlServer {
@@ -99,7 +103,9 @@ impl ControlServer {
     /// to future spawns.
     pub fn with_injection(mut self, config: InjectionConfig) -> Self {
         let _ = crate::inject::write_claude_hooks_file(&config.inject_dir);
-        let _ = crate::inject::write_claude_mcp_file(&config.inject_dir, &config.cli_path);
+        if let Some(mcp) = config.mcp.as_ref() {
+            let _ = crate::inject::write_claude_mcp_file(&config.inject_dir, mcp);
+        }
         self.injection = Some(config);
         self
     }

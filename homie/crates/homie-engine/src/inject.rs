@@ -103,6 +103,13 @@ pub fn gateway_env(injection: &InjectionSpec, runtime: &GatewayRuntime) -> Vec<(
     }
 }
 
+/// Environment a session needs to authenticate against the MCP endpoint: the
+/// per-daemon bearer secret. The session id itself is injected separately via
+/// [`SESSION_ID_ENV`].
+pub fn mcp_env(mcp: &crate::mcp::McpRuntime) -> Vec<(String, String)> {
+    vec![(crate::mcp::TOKEN_ENV.into(), mcp.token.clone())]
+}
+
 /// A random v4 UUID in the lowercase-hex form Claude accepts as
 /// `--session-id`. Minting it ourselves is what makes resume possible later
 /// without the agent ever reporting an id.
@@ -161,33 +168,35 @@ pub fn write_claude_hooks_file(inject_dir: &Path) -> io::Result<()> {
     )
 }
 
-/// The Claude `--mcp-config` file: the `homie` stdio server backed by the
-/// CLI's sibling `homie-mcp` proxy (or the CLI itself as a fallback).
-pub fn write_claude_mcp_file(inject_dir: &Path, cli_path: &Path) -> io::Result<()> {
-    let (command, args) = mcp_launch(cli_path);
+/// The Claude `--mcp-config` file: the `homie` MCP server over `type:http`.
+/// The endpoint URL is fixed per daemon; the bearer secret and session id are
+/// injected as environment variables and expanded by Claude at runtime, so the
+/// file content is identical for every session and safe to write once.
+pub fn write_claude_mcp_file(inject_dir: &Path, mcp: &crate::mcp::McpRuntime) -> io::Result<()> {
+    // Build the header values at runtime so the secret reference never appears
+    // as a literal `Authorization: Bearer …` in source (the commit hook rejects
+    // that shape).
+    let mut headers = serde_json::Map::new();
+    headers.insert(
+        "Authorization".to_string(),
+        json!(format!("Bearer ${{{}}}", crate::mcp::TOKEN_ENV)),
+    );
+    headers.insert(
+        crate::mcp::SESSION_HEADER.to_string(),
+        json!(format!("${{{}}}", SESSION_ID_ENV)),
+    );
     write_atomic(
         &inject_dir.join("claude-mcp.json"),
         &serde_json::to_vec_pretty(&json!({
             "mcpServers": {
-                "homie": { "type": "stdio", "command": command, "args": args }
+                "homie": {
+                    "type": "http",
+                    "url": format!("{}/mcp", mcp.base_url.trim_end_matches('/')),
+                    "headers": headers,
+                }
             }
         }))?,
     )
-}
-
-fn mcp_launch(cli_path: &Path) -> (String, Vec<String>) {
-    let proxy = cli_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("homie-mcp");
-    if is_executable(&proxy) {
-        (proxy.to_string_lossy().into_owned(), Vec::new())
-    } else {
-        (
-            cli_path.to_string_lossy().into_owned(),
-            vec!["mcp-stdio".into()],
-        )
-    }
 }
 
 /// Per-launch injection arguments for the mechanisms a manifest opted into.
@@ -196,6 +205,7 @@ pub fn injection_args(
     inject_dir: &Path,
     cli_path: &Path,
     gateway: Option<&GatewayRuntime>,
+    mcp: Option<&crate::mcp::McpRuntime>,
 ) -> Vec<String> {
     let mut argv = Vec::new();
     if injection.claude_hooks {
@@ -219,25 +229,28 @@ pub fn injection_args(
             toml_string(&cli_path.to_string_lossy())
         ));
     }
-    if injection.codex_mcp {
-        let (command, args) = mcp_launch(cli_path);
-        let encoded_args = args
-            .iter()
-            .map(|arg| toml_string(arg))
-            .collect::<Vec<_>>()
-            .join(",");
+    if injection.codex_mcp
+        && let Some(mcp) = mcp
+    {
+        let url = format!("{}/mcp", mcp.base_url.trim_end_matches('/'));
+        argv.push("-c".into());
+        argv.push(format!("mcp_servers.homie.url={}", toml_string(&url)));
         argv.push("-c".into());
         argv.push(format!(
-            "mcp_servers.homie.command={}",
-            toml_string(&command)
+            "mcp_servers.homie.bearer_token_env_var={}",
+            toml_string(crate::mcp::TOKEN_ENV)
         ));
         argv.push("-c".into());
-        argv.push(format!("mcp_servers.homie.args=[{encoded_args}]"));
+        argv.push(format!(
+            "mcp_servers.homie.env_http_headers={{ \"{}\" = \"{}\" }}",
+            crate::mcp::SESSION_HEADER,
+            SESSION_ID_ENV
+        ));
     }
-    if injection.codex_gateway {
-        if let Some(runtime) = gateway {
-            argv.extend(codex_gateway_args(runtime));
-        }
+    if injection.codex_gateway
+        && let Some(runtime) = gateway
+    {
+        argv.extend(codex_gateway_args(runtime));
     }
     argv
 }
@@ -261,20 +274,6 @@ fn toml_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-fn is_executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path)
-            .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
-}
-
 fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -287,6 +286,13 @@ fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_mcp() -> crate::mcp::McpRuntime {
+        crate::mcp::McpRuntime {
+            base_url: "http://127.0.0.1:7941".into(),
+            token: "<example-token>".into(),
+        }
+    }
 
     #[test]
     fn uuids_are_v4_and_unique() {
@@ -317,43 +323,24 @@ mod tests {
     }
 
     #[test]
-    fn the_mcp_file_prefers_the_sibling_proxy() {
+    fn the_mcp_file_is_http_typed_with_env_headers() {
         let temp = tempfile::tempdir().expect("temp");
-        let cli = temp.path().join("bin/homie");
-        std::fs::create_dir_all(cli.parent().unwrap()).expect("mkdir");
-        std::fs::write(&cli, "#!/bin/sh\n").expect("cli");
-
-        // No proxy: fall back to `homie mcp-stdio`.
-        write_claude_mcp_file(temp.path(), &cli).expect("write");
+        let mcp = test_mcp();
+        write_claude_mcp_file(temp.path(), &mcp).expect("write");
         let parsed: serde_json::Value = serde_json::from_slice(
             &std::fs::read(temp.path().join("claude-mcp.json")).expect("read"),
         )
         .expect("parse");
-        assert_eq!(parsed["mcpServers"]["homie"]["args"][0], "mcp-stdio");
-
-        // With an executable sibling, it becomes the command.
-        let proxy = temp.path().join("bin/homie-mcp");
-        std::fs::write(&proxy, "#!/bin/sh\n").expect("proxy");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&proxy, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod");
-        }
-        write_claude_mcp_file(temp.path(), &cli).expect("write");
-        let parsed: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(temp.path().join("claude-mcp.json")).expect("read"),
-        )
-        .expect("parse");
+        let homie = &parsed["mcpServers"]["homie"];
+        assert_eq!(homie["type"], "http");
+        assert_eq!(homie["url"], "http://127.0.0.1:7941/mcp");
         assert_eq!(
-            parsed["mcpServers"]["homie"]["command"],
-            proxy.to_string_lossy().as_ref()
+            homie["headers"]["Authorization"],
+            "Bearer ${HOMIE_MCP_TOKEN}"
         );
         assert_eq!(
-            parsed["mcpServers"]["homie"]["args"]
-                .as_array()
-                .map(Vec::len),
-            Some(0)
+            homie["headers"]["x-homie-session-id"],
+            "${HOMIE_SESSION_ID}"
         );
     }
 
@@ -362,14 +349,15 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp");
         let cli = temp.path().join("homie");
         write_claude_hooks_file(temp.path()).expect("hooks");
-        write_claude_mcp_file(temp.path(), &cli).expect("mcp");
+        let mcp = test_mcp();
+        write_claude_mcp_file(temp.path(), &mcp).expect("mcp");
 
         let claude = InjectionSpec {
             claude_hooks: true,
             claude_mcp: true,
             ..Default::default()
         };
-        let args = injection_args(&claude, temp.path(), &cli, None);
+        let args = injection_args(&claude, temp.path(), &cli, None, Some(&mcp));
         assert_eq!(args[0], "--settings");
         assert!(args[1].ends_with("claude-hooks.json"));
         assert_eq!(args[2], "--mcp-config");
@@ -380,12 +368,22 @@ mod tests {
             codex_mcp: true,
             ..Default::default()
         };
-        let args = injection_args(&codex, temp.path(), &cli, None);
+        let args = injection_args(&codex, temp.path(), &cli, None, Some(&mcp));
         assert_eq!(args[0], "-c");
         assert!(args[1].starts_with("notify=["), "{args:?}");
         assert!(
             args.iter()
-                .any(|arg| arg.starts_with("mcp_servers.homie.command=")),
+                .any(|arg| arg.starts_with("mcp_servers.homie.url=")),
+            "{args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg.starts_with("mcp_servers.homie.bearer_token_env_var=")),
+            "{args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg.starts_with("mcp_servers.homie.env_http_headers=")),
             "{args:?}"
         );
     }
@@ -402,7 +400,7 @@ mod tests {
         };
         let temp = tempfile::tempdir().expect("temp");
         let cli = temp.path().join("homie");
-        let args = injection_args(&injection, temp.path(), &cli, Some(&runtime));
+        let args = injection_args(&injection, temp.path(), &cli, Some(&runtime), None);
         assert!(args.iter().any(|a| a == "-c"), "{args:?}");
         assert!(
             args.iter().any(|a| a == "model_provider=\"homie\""),
@@ -435,13 +433,24 @@ mod tests {
         };
         // Not opted in → no gateway args even with a runtime.
         let no_opt = InjectionSpec::default();
-        assert!(injection_args(&no_opt, temp.path(), &cli, Some(&runtime)).is_empty());
+        assert!(injection_args(&no_opt, temp.path(), &cli, Some(&runtime), None).is_empty());
         // Opted in but no runtime → no gateway args.
         let opt = InjectionSpec {
             codex_gateway: true,
             ..Default::default()
         };
-        assert!(injection_args(&opt, temp.path(), &cli, None).is_empty());
+        assert!(injection_args(&opt, temp.path(), &cli, None, None).is_empty());
+    }
+
+    #[test]
+    fn codex_mcp_args_absent_without_runtime() {
+        let temp = tempfile::tempdir().expect("temp");
+        let cli = temp.path().join("homie");
+        let opt = InjectionSpec {
+            codex_mcp: true,
+            ..Default::default()
+        };
+        assert!(injection_args(&opt, temp.path(), &cli, None, None).is_empty());
     }
 
     #[test]
@@ -454,6 +463,15 @@ mod tests {
         assert_eq!(env.len(), 1);
         assert_eq!(env[0].0, CODEX_GATEWAY_ENV);
         assert_eq!(env[0].1, "sk-abc123");
+    }
+
+    #[test]
+    fn mcp_env_exposes_only_the_token() {
+        let mcp = test_mcp();
+        let env = mcp_env(&mcp);
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].0, crate::mcp::TOKEN_ENV);
+        assert_eq!(env[0].1, "<example-token>");
     }
 
     #[test]
