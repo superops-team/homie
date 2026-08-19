@@ -75,3 +75,10 @@ shortLabel + `shell`）：
   `homie-mcp` 中转。
 - 移除资产：`homie-mcp` crate、`mcp-stdio` / `mcp-tools` / `mcp-call` 子命令、`Sources/HomieMCP`
   的 Swift 工具定义（若全部迁 Rust）。
+
+## 8. 验证
+
+- 集成测试：`homie/crates/homie-engine/tests/mcp_http.rs`（真实 listener + `reqwest` POST），覆盖
+  `401`、`initialize`、`tools/list`、`ping` 与事实文件保密性（change_id:
+  `mcp-http-transport-integration-test`）。
+- 单测覆盖 JSON-RPC 核心（`src/mcp/mod.rs`）与 schema（`src/mcp/tools.rs`）。
