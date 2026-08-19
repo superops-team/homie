@@ -9,7 +9,238 @@ shells in parallel — across git worktrees or on remote hosts — each with a l
 (working / needs-you / done) and tmux-like persistence: closing the app never kills a session,
 and a daemon restart brings conversations back.
 
-![homie](docs/images/homie.png)
+- **Many agents at once.** Each session is a real terminal with a real PTY. Group them by
+  project, split them across git worktrees, or run them on a remote host over ssh+tmux.
+- **Status you can trust.** homie reads what an agent actually painted on its screen and tells
+  you which ones are working, which are waiting on you, and which are done — so you can watch
+  ten sessions without reading ten terminals.
+- **Sessions outlive the app.** A background daemon owns the PTYs. Quit homie, reopen it, and
+  everything is still there.
+- **Agents can orchestrate agents.** An MCP server lets a running agent spawn another one,
+  watch it, read its output, and answer its prompts.
+- **One credential entrypoint.** Homie owns the LLM configuration. Real provider credentials
+  live in Homie; managed agents receive virtual keys and call Homie's OpenAI-compatible proxy,
+  which applies policy, records usage, and forwards upstream.
+
+First-class status detection and resume are Claude Code and Codex. Cursor and Gemini run with
+partial support, and anything else runs as a terminal with running/exited status.
+
+---
+
+## Architecture
+
+Homie is a **multi-process, single-daemon** system. One authoritative Rust Engine owns all PTYs,
+child agents, and persisted state; everything else is a client or a narrow-purpose helper.
+
+```mermaid
+graph TD
+    App["homie (desktop app · GPUI)"] -->|"DaemonClient · Unix socket"| Daemon["homied-rs (Engine daemon)"]
+    CLI["homie CLI (Swift)"] -->|"DaemonClient · Unix socket"| Daemon
+
+    Daemon -->|"spawn · PTY master"| Holder["homie-holder (--manager)"]
+    Holder -->|"spawn · injected argv/env"| Agent["agent (Claude Code / Codex / shell)"]
+
+    Agent -->|"MCP stdio"| MCP["homie-mcp"]
+    MCP -->|"spawn"| CLI
+    CLI -->|"control socket"| Daemon
+
+    Daemon -->|"SSH remote PTY"| Remote["homie-remote (helper)"]
+
+    Agent -->|"LLM request · virtual key"| GW["homie-gateway"]
+    GW -->|"upstream forward"| Provider["OpenAI-compatible provider"]
+    GW -.->|"library-embedded credential resolve"| Node["homie-node (remote VPS service)"]
+```
+
+### Process model
+
+| Process | Crate / source | Role | Lifetime |
+|---------|----------------|------|----------|
+| `homie` (app) | `homie-app` | GPUI desktop: window, sidebar, terminal renderer, palette, usage | foreground |
+| `homie` (CLI) | Swift `homie-cli` | `status` / `doctor` / hooks / notify forwarder | on demand |
+| `homied-rs` | `homie-engine` | **authoritative daemon/runtime** — PTY orchestration, session registry & persistence, control socket | background, `flock` singleton |
+| `homie-holder` | `homie-engine` | owns the PTY master so sessions survive an Engine restart; `--manager` hosts all holders of one registry | daemon lifetime (idle 30s) |
+| `homie-gateway` | `homie-gateway` | local LLM gateway: virtual keys, OpenAI/Anthropic-compatible proxy, upstream forwarding, per-key usage | standalone |
+| `homie-node` | `homie-node` | remote execution node (VPS): accounts, provider login, credential custody | remote systemd user service |
+| `homie-mcp` | `homie-mcp` | MCP shim injected into agents; exposes `homie` tools | one per agent |
+| `homie-remote` | `homie-remote` | remote PTY helper (SSH bootstrap / compatibility path) | on demand, remote |
+| `homie-ssh-askpass` | `homie-engine` | macOS OpenSSH askpass broker | on demand |
+
+Key invariants:
+
+- **The daemon is the authority.** All background supervision, session orchestration, remote
+  spawning, and registry persistence live in `homied-rs`. The app is a client that reconnects
+  (500 ms → 8 s backoff) and never blocks UI on daemon startup.
+- **The holder is the PTY-survival boundary.** `homie-holder` holds the PTY master; a daemon
+  restart adopts the still-running holders instead of killing sessions.
+- **Agent support is data, not code.** Each agent is one JSON manifest under
+  `homie/crates/homie-engine/manifests/`; spawn flags, resume keys, prompt approval, and screen
+  status rules are all declared there.
+- **Credentials stay where the agent runs.** Homie never copies raw provider tokens into
+  managed-agent config; it issues virtual keys and forwards through `homie-gateway`.
+
+---
+
+## Module map
+
+### Rust crates (`homie/`)
+
+| Crate | Responsibility |
+|-------|----------------|
+| `homie-app` | GPUI desktop app: window shell, sidebar, terminal, inspector, settings, usage UI |
+| `homie-ui` | shared GPUI visual tokens and reusable components |
+| `homie-engine` | daemon/runtime: session supervision, control protocol, holders, injection, remote spawn |
+| `homie-client` | client API for the app/CLI to talk to the daemon (`DaemonClient`) and nodes (`NodeClient`) |
+| `homie-proto` | wire DTOs, control methods/events, paths, remote-PTY protocol |
+| `homie-term` | GPUI terminal rendering support |
+| `homie-terminal-state` | terminal state model shared by local/remote runtimes |
+| `homie-pty` | PTY abstraction |
+| `homie-node` | remote node service: accounts, provider login, credential custody (`credentials`) |
+| `homie-remote` | remote PTY helper binary |
+| `homie-mcp` | MCP bridge binary (injected into agents) |
+| `homie-updater` | update/install support |
+| `homie-usage` | usage domain types and token estimation |
+| `homie-gateway` | local LLM gateway: virtual keys, proxy, upstream forwarding, per-key usage |
+
+Dependency direction (simplified):
+
+```
+homie-app ─▶ homie-ui, homie-client
+homie-client ─▶ homie-proto
+homie-engine ─▶ homie-proto, homie-pty, homie-term, homie-terminal-state, homie-usage
+homie-node ─▶ homie-client, homie-proto
+homie-gateway ─▶ homie-usage, homie-engine (inject), homie-node (credentials)
+homie-remote ─▶ homie-proto
+```
+
+### Swift package
+
+| Target | Responsibility |
+|--------|----------------|
+| `homie-cli` | CLI entrypoint and user-facing commands |
+| `HomieProtocol` | Swift protocol DTOs used by CLI surfaces |
+| `HomieCore` | core types and packaged/generated resources (agent manifests) |
+| `HomieMCP` | Swift MCP support |
+
+---
+
+## Message flow
+
+The control channel is a newline-delimited JSON protocol over an owner-only Unix socket.
+Requests carry `{id, method, params}`, responses `{id, ok|err}`, and pushes `{event, seq, params}`.
+The `hello` handshake pins the wire version and engine identity.
+
+### 1. Startup
+
+```mermaid
+sequenceDiagram
+    participant App as homie (app)
+    participant D as homied-rs
+    participant H as homie-holder
+
+    App->>D: probe hello (daemon.sock)
+    alt socket dead
+        App->>D: spawn detached (content-hash verify)
+        D->>D: flock singleton · load manifests · load registry · restore holders
+        D-->>App: hello {proto, build, kind}
+    else socket live
+        D-->>App: hello (existing)
+    end
+    App->>D: events.subscribe
+    App->>D: session.list
+    D-->>App: session records (adopted)
+```
+
+### 2. Session spawn (local)
+
+```mermaid
+sequenceDiagram
+    participant App as homie (app)
+    participant D as homied-rs
+    participant H as homie-holder
+    participant A as agent
+
+    App->>D: session.spawn {kind, cwd, argv?}
+    D->>D: resolve manifest descriptor · optional worktree create
+    D->>H: launch holder (PTY master)
+    D->>A: exec via holder with injected argv/env (hooks · MCP · gateway)
+    A-->>D: hook.report (Claude) / screen detection (Codex)
+    D-->>App: event session.updated {status}
+```
+
+### 3. Detach, quit, and resume
+
+```mermaid
+sequenceDiagram
+    participant App as homie (app)
+    participant D as homied-rs
+    participant H as homie-holder
+    participant A as agent
+
+    App->>D: quit (app exits)
+    Note over D,H: holder keeps PTY master alive; agent keeps running
+    App->>D: relaunch → hello → session.list
+    D->>H: adopt live holder
+    D->>A: replay offset-addressed output log
+    D-->>App: session.updated {scrollback, screen}
+```
+
+### 4. Agent-to-agent orchestration (MCP)
+
+```mermaid
+sequenceDiagram
+    participant A1 as agent A
+    participant M as homie-mcp
+    participant C as homie CLI
+    participant D as homied-rs
+
+    A1->>M: MCP tool call (spawn/watch/send_text)
+    M->>C: invoke subcommand
+    C->>D: session.* (control socket)
+    D-->>C: result
+    C-->>M: JSON
+    M-->>A1: tool result (output, status, artifact)
+```
+
+### 5. LLM gateway
+
+```mermaid
+sequenceDiagram
+    participant A as agent
+    participant G as homie-gateway
+    participant N as homie-node
+    participant U as upstream provider
+
+    A->>G: POST /v1/responses|messages (virtual key)
+    G->>G: auth virtual key · policy/quota · model routing
+    G->>G: resolve upstream credential
+    alt credentialSource = node
+        G->>N: resolve_default_codex_credential (library-embedded)
+        N-->>G: {kind, base_url, token}
+        G->>G: fallback to static apiKey on failure
+    end
+    G->>U: forward (server-side upstream key only)
+    U-->>G: streaming (SSE) response
+    G-->>A: stream + record per-key usage
+```
+
+### 6. Remote node (VPS)
+
+```mermaid
+sequenceDiagram
+    participant App as homie (app)
+    participant D as homied-rs
+    participant N as homie-node (VPS)
+    participant A as agent (VPS)
+
+    App->>D: session.spawn {host}
+    D->>N: hello + provider/account/session calls (encrypted channel)
+    N->>A: spawn via remote holder
+    A-->>N: output
+    N-->>D: session events
+    D-->>App: session.updated
+```
+
+---
 
 ## Install
 
@@ -41,38 +272,6 @@ macOS 15 or newer.
 The [getting-started guide](docs/GETTING_STARTED.md) covers remote hosts, MCP
 orchestration, diagnostics, local data, and uninstalling.
 
-## What it does
-
-- **Many agents at once.** Each session is a real terminal with a real PTY. Group them by
-  project, split them across git worktrees, or run them on a remote host over ssh+tmux.
-- **Status you can trust.** homie reads what an agent actually painted on its screen and tells
-  you which ones are working, which are waiting on you, and which are done — so you can watch
-  ten sessions without reading ten terminals.
-- **Sessions outlive the app.** A background daemon owns the PTYs. Quit homie, reopen it, and
-  everything is still there.
-- **Agents can orchestrate agents.** An MCP server lets a running agent spawn another one,
-  watch it, read its output, and answer its prompts.
-
-First-class status detection and resume are Claude Code and Codex. Cursor and Gemini run with
-partial support, and anything else runs as a terminal with running/exited status.
-
-## Architecture
-
-Two processes, one wire protocol:
-
-- **`homie`** — the desktop app: Rust + [GPUI](https://github.com/zed-industries/zed). Owns the
-  window, sidebar, terminal renderer, command palette, and usage accounting. Lives in
-  [`homie/`](homie/).
-- **`homied-rs`** — a headless Rust Engine, launched by the app and outliving it. Owns PTYs and
-  child agent processes, an offset-addressed output log per session (for detach and replay), a
-  headless terminal emulator for status detection, the session registry and persistence,
-  worktrees, and the control socket.
-
-`homie` is a small CLI: the MCP shim injected into agents, the hook and notify forwarders, and
-`status`/`doctor`. `homie-holder` owns the PTY master so sessions survive an Engine restart.
-All background process supervision is Rust-owned; Swift code is limited to shared protocol/CLI
-support and platform glue where it is still needed.
-
 ## Adding an agent
 
 Agent support is data, not code. Each agent is one JSON file in
@@ -92,7 +291,7 @@ while.
 ```sh
 swift build                                # Swift CLI/protocol support
 (cd homie && cargo build)                  # Rust app + Engine
-(cd homie && cargo run -p homie-app)        # run the app from source
+(cd homie && cargo run -p homie-app)       # run the app from source
 
 homie/scripts/package.sh                    # full bundle
 homie/scripts/install-local.sh
@@ -117,14 +316,4 @@ manifests are all welcome. New contributors can start with
 [`good first issue`](https://github.com/cristicretu/homie/labels/good%20first%20issue)
 or [`help wanted`](https://github.com/cristicretu/homie/labels/help%20wanted).
 
-Questions belong in [Discussions](https://github.com/cristicretu/homie/discussions),
-reproducible bugs in [Issues](https://github.com/cristicretu/homie/issues), and
-vulnerabilities in [private security reports](SECURITY.md). See the
-[roadmap](ROADMAP.md), [support guide](SUPPORT.md), [privacy notice](PRIVACY.md),
-and [governance](GOVERNANCE.md) for project expectations.
-
-## License
-
-Homie's original source is Apache 2.0. Builds also contain third-party software
-under its own licenses; see [LICENSE](LICENSE), [NOTICE](NOTICE), and the
-machine-checked dependency policy in [`license-policy.json`](license-policy.json).
+Questions belong in [Discussions](https://github.com/cristicretu/homie/discussions).
