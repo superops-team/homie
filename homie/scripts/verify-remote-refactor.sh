@@ -69,17 +69,17 @@ for path in sorted(glob.glob('${manifests}/*.json')):
 # Handoff refused every call: the remote branch errored and local->local was
 # rejected as 'already local'.
 check "session.migrate refuses only without a transport" \
-    grep -q 'self.remote.is_none()' crates/homie-engine/src/control.rs
+    grep -q 'self.remote.is_none()' crates/homie-engine/src/control/handlers.rs
 
 check "resume relaunches a session whose Agent died" \
-    grep -q 'Evicting the corpse' crates/homie-engine/src/control.rs
+    grep -q 'Evicting the corpse' crates/homie-engine/src/control/handlers.rs
 
 check "toolchain stays on the version main ships" \
     grep -q 'channel = "1.97.1"' rust-toolchain.toml
 
 # Extracting the terminal crate forked before checkpoint v2 existed.
 check "checkpoints still persist scrollback" \
-    grep -q 'pub fn history_snapshot' crates/homie-terminal-state/src/lib.rs
+    grep -q 'pub fn history_snapshot' crates/homie-terminal-state/src/screen.rs
 
 check "terminal file/URL references survive" \
     grep -q 'pub fn reference_at' crates/homie-term/src/element.rs
