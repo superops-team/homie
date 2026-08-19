@@ -46,35 +46,23 @@ Meaningful changes must follow this sequence:
 
 Small documentation-only changes may use the lightweight version of this workflow, but they still need a clear source document and Beads linkage when they establish or change project process.
 
-## Worktree Build Cache Rules
+## Build Cache Rules
 
-Homie worktrees must share one project-level Cargo build output directory.
-Do not let every worktree create its own `homie/target` tree.
-
-The local project-level shared target directory is:
+Homie currently develops on a single branch (`main`). `homie/target` is a real
+local directory inside the workspace — not a symlink — so sandboxed Cargo can
+write to it directly without escalation.
 
 ```text
-/Users/bytedance/workspace/github/homie-worktrees/.shared/homie-target
+homie/target          # real local directory (build output, git-ignored)
 ```
 
-When creating a new Homie worktree, create `homie/target` as a symlink to that
-shared directory before running Cargo or Homie packaging scripts:
+Do not point `homie/target` outside the workspace root. A target path outside
+`/Users/bytedance/workspace/github/homie` breaks sandboxed Cargo (writes to
+`target/debug/.cargo-lock` fail with "Operation not permitted").
 
-```bash
-mkdir -p /Users/bytedance/workspace/github/homie-worktrees/.shared
-mkdir -p <new-worktree>/homie
-ln -s /Users/bytedance/workspace/github/homie-worktrees/.shared/homie-target <new-worktree>/homie/target
-```
-
-If a worktree already has a real `homie/target` directory, inspect it first. If
-it is disposable build output, move or remove it, then replace it with the
-symlink. Never commit the symlink or the shared target directory; keep
-`homie/target` ignored through local exclude rules when needed.
-
-This symlink rule is preferred over writing `CARGO_TARGET_DIR` into tracked
-repository configuration because existing Homie scripts default to
-`homie/target`, and the symlink keeps those scripts and direct Cargo commands on
-the same shared build cache.
+Keep `homie/target` git-ignored. If worktree-based multi-branch development
+resumes later, reintroduce a shared cache path then — but keep it inside the
+workspace root.
 
 ## Beads Requirements Management
 
