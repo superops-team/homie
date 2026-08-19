@@ -91,25 +91,11 @@ impl ControlServer {
         if p.host.is_some() {
             return self.session_spawn_remote(p, argv);
         }
-        let kind = p.kind.id().to_string();
-        // A generic kind carries the user's command line inside itself.
-        let argv = if argv.is_empty() {
-            match p.kind.command() {
-                Some(command) if !command.is_empty() => {
-                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-                    vec![shell, "-lc".into(), command.to_string()]
-                }
-                _ if kind == homie_proto::AgentKind::SHELL_ID => {
-                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-                    vec![shell, "-l".into()]
-                }
-                _ => Vec::new(),
-            }
-        } else {
-            argv
-        };
 
-        // A worktree spawn creates the checkout first, then lands in it.
+        // A worktree spawn creates the checkout first, then lands in it. This
+        // stays in the handler, before the registry lock, because
+        // `git worktree add` is a slow filesystem call that must not stall
+        // every other control request.
         let mut cwd = p.cwd.clone();
         let mut worktree_path = None;
         let mut git_branch = None;
@@ -129,130 +115,20 @@ impl ControlServer {
         }
 
         let mut registry = self.registry.lock().map_err(poisoned)?;
-        let engine = registry.engine();
-        let manifest = engine
-            .manifest(&kind)
-            .ok_or_else(|| ControlError::not_found(format!("no manifest for agent {kind:?}")))?;
-        let descriptor = manifest.agent.clone().unwrap_or_default();
-        let authority = descriptor.authority();
-
-        let id = next_session_id();
-        // Build the complete agent argv before `spawn_spec`: agents declaring
-        // `returnToLoginShell` need every manifest and injection argument
-        // quoted inside the shell's `-c` command.
-        let mut launch_args = argv.clone();
-        let mut agent_session_id = None;
-        let mut gateway_runtime = None;
-        if descriptor.binary.is_some() {
-            launch_args.extend(descriptor.spawn_args.iter().cloned());
-            agent_session_id = descriptor.session_id_flag.as_ref().map(|flag| {
-                let uuid = crate::inject::uuid_v4();
-                launch_args.push(flag.clone());
-                launch_args.push(uuid.clone());
-                uuid
-            });
-            if let Some(injection) = &self.injection {
-                // Mint a per-session virtual key before assembling argv so the
-                // same runtime feeds both the Codex `-c` overrides and env.
-                if descriptor.injection.codex_gateway
-                    && let Some(issuer) = &injection.gateway
-                {
-                    match issuer.mint(Some(id.clone())) {
-                        Ok(runtime) => gateway_runtime = Some(runtime),
-                        Err(error) => eprintln!("homied-rs: virtual key mint failed: {error}"),
-                    }
-                }
-                launch_args.extend(crate::inject::injection_args(
-                    &descriptor.injection,
-                    &injection.inject_dir,
-                    &injection.cli_path,
-                    gateway_runtime.as_ref(),
-                    injection.mcp.as_ref(),
-                ));
-            }
-        }
-
-        let inherited: Vec<(String, String)> = std::env::vars().collect();
-        let mut pty = match descriptor.spawn_spec(&cwd_path, inherited.clone(), &launch_args) {
-            Some(spec) => spec,
-            // No binary in the manifest: the caller has to say what to run.
-            None if !argv.is_empty() => {
-                let mut spec = crate::pty::PtySpec::new(argv.clone(), &cwd_path);
-                spec.env = shell_pty_environment(inherited);
-                spec
-            }
-            None => {
-                return Err(ControlError::bad_request(format!(
-                    "agent {kind:?} declares no binary, so argv is required"
-                )));
-            }
-        };
-
-        let mut record = new_record(&id, &kind, &cwd);
-        // A linked worktree is an execution cwd inside the project selected
-        // by the user; it does not become a new first-level sidebar project.
-        record.project_id = crate::registry::session_project_id(&p.cwd, None);
-        registry.ensure_session_project(&p.cwd, None);
-        if let Some(title) = &p.title {
-            record.title = title.clone();
-            record.title_source = homie_proto::TitleSource::HomieAssigned;
-        }
-        record.worktree_path = worktree_path;
-        record.git_branch = git_branch.or_else(|| crate::git::branch(&cwd_path));
-        record.parent = p.parent.clone();
-        if let (Some(cols), Some(rows)) = (p.initial_cols, p.initial_rows) {
-            pty.cols = cols.clamp(2, u16::MAX as i64) as u16;
-            pty.rows = rows.clamp(2, u16::MAX as i64) as u16;
-        }
-
-        // Injection environment and the caller-minted conversation UUID. The
-        // argv side was assembled before `spawn_spec` so its shell wrapper
-        // contains the complete command.
-        if descriptor.binary.is_some() {
-            if let Some(injection) = &self.injection {
-                pty.env
-                    .push((crate::inject::SESSION_ID_ENV.into(), id.clone()));
-                pty.env.push((
-                    crate::inject::SOCKET_ENV.into(),
-                    self.socket_path.to_string_lossy().into_owned(),
-                ));
-                pty.env.push((
-                    crate::inject::CLI_ENV.into(),
-                    injection.cli_path.to_string_lossy().into_owned(),
-                ));
-                if let Some(runtime) = &gateway_runtime {
-                    pty.env
-                        .extend(crate::inject::gateway_env(&descriptor.injection, runtime));
-                }
-                if let Some(mcp) = injection.mcp.as_ref() {
-                    pty.env.extend(crate::inject::mcp_env(mcp));
-                }
-            }
-            if let Some(uuid) = &agent_session_id {
-                record.agent_session_id = Some(uuid.clone());
-                if descriptor.injection.claude_hooks
-                    && let Ok(home) = std::env::var("HOME")
-                {
-                    record.transcript_path = Some(
-                        crate::inject::claude_transcript_path(Path::new(&home), &cwd, uuid)
-                            .to_string_lossy()
-                            .into_owned(),
-                    );
-                }
-            }
-        }
-        let spec = crate::session::SessionSpec {
-            id: id.clone(),
-            pty,
-            manifest_id: kind.clone(),
-            authority,
-            logs_dir: self.logs_dir.clone(),
-            holder: self.holder.clone(),
-            remote: None,
-            defer_launch: true,
-        };
+        let plan = crate::session::spawn_spec(
+            &self.launch_context(),
+            &registry,
+            &p,
+            argv,
+            &cwd,
+            worktree_path,
+            git_branch,
+        )?;
+        let id = plan.spec.id.clone();
+        let kind = plan.spec.manifest_id.clone();
+        registry.ensure_session_project(&plan.project_root, plan.host_id.as_deref());
         registry
-            .spawn(spec, record)
+            .spawn(plan.spec, plan.record)
             .map_err(|error| ControlError::internal(error.to_string()))?;
         let _ = registry.persist();
         self.publish_updated(&registry, &id);
@@ -262,19 +138,7 @@ impl ControlServer {
         // `injectInitialPrompt`, which replaced a blind fixed delay that
         // raced Claude Code's boot and lost keystrokes into a composer that
         // did not exist yet.
-        let prompt = p.initial_prompt.clone().filter(|prompt| !prompt.is_empty());
-        if kind == homie_proto::AgentKind::CLAUDE_CODE_ID || prompt.is_some() {
-            let registry = Arc::clone(&self.registry);
-            let session_id = id.clone();
-            std::thread::spawn(move || {
-                prepare_agent_input(
-                    &registry,
-                    &session_id,
-                    kind == homie_proto::AgentKind::CLAUDE_CODE_ID,
-                    prompt.as_deref(),
-                );
-            });
-        }
+        self.schedule_initial_prompt(&kind, plan.prompt, &id);
 
         let record = registry
             .records()
@@ -291,189 +155,48 @@ impl ControlServer {
         p: homie_proto::SessionSpawnParams,
         caller_argv: Vec<String>,
     ) -> Result<JsonValue, ControlError> {
-        let manager = self
-            .remote
-            .as_ref()
-            .cloned()
-            .ok_or_else(crate::remote::transport_unavailable)?;
-        let binding_store = self.remote_bindings.clone().ok_or_else(|| {
-            ControlError::internal("owner-only remote binding store is unavailable")
-        })?;
-        let host_id = p
-            .host
-            .as_deref()
-            .ok_or_else(|| ControlError::bad_request("remote host is required"))?;
-        let host = self.resolve_host(host_id)?;
-        if p.new_worktree.unwrap_or(false) {
-            return Err(ControlError::bad_request(
-                "remote worktree creation requires the structured workspace RPC",
-            ));
-        }
-        if p.same_repo_as.is_some() {
-            return Err(ControlError::bad_request(
-                "sameRepoAs requires the structured remote workspace RPC",
-            ));
-        }
-
-        let helper = manager.ensure_helper(&host).map_err(io_control_error)?;
-        let persistence = manager
-            .probe_persistence(&host, &helper)
-            .map_err(io_control_error)?;
-        let requested_cwd = if p.cwd.trim().is_empty() {
-            host.default_cwd.clone().unwrap_or_else(|| "~".into())
-        } else {
-            p.cwd.clone()
-        };
-        let captured = manager
-            .capture_environment(
-                &helper,
-                &homie_proto::remote_pty::EnvironmentCaptureRequest {
-                    cwd: Some(requested_cwd),
-                    timeout_millis: 10_000,
-                },
-            )
-            .map_err(io_control_error)?;
-        let cwd = PathBuf::from(&captured.cwd);
-        if !cwd.is_absolute() {
-            return Err(ControlError::internal(
-                "remote Helper returned a non-absolute cwd",
-            ));
-        }
-
         let kind = p.kind.id().to_string();
-        let (descriptor, engine) = {
+        // Resolve the manifest under a brief lock, then release it so the slow
+        // remote transport calls below run without stalling other requests.
+        let descriptor = {
             let registry = self.registry.lock().map_err(poisoned)?;
             let engine = registry.engine();
             let manifest = engine.manifest(&kind).ok_or_else(|| {
                 ControlError::not_found(format!("no manifest for agent {kind:?}"))
             })?;
-            (manifest.agent.clone().unwrap_or_default(), engine)
+            manifest.agent.clone().unwrap_or_default()
         };
-        drop(engine);
-        let authority = descriptor.authority();
-        let inherited = captured
-            .environment
-            .into_iter()
-            .map(|variable| (variable.name, variable.value))
-            .collect::<Vec<_>>();
-
-        let id = next_session_id();
-        let mut agent_session_id = None;
-        let mut launch_args = caller_argv.clone();
-        if descriptor.binary.is_some() {
-            launch_args.extend(descriptor.spawn_args.iter().cloned());
-            agent_session_id = descriptor.session_id_flag.as_ref().map(|flag| {
-                let uuid = crate::inject::uuid_v4();
-                launch_args.push(flag.clone());
-                launch_args.push(uuid.clone());
-                uuid
-            });
-        }
-
-        let argv = if descriptor.binary.is_some() {
-            descriptor
-                .remote_spawn_spec(&cwd, inherited.clone(), &launch_args)
-                .ok_or_else(|| ControlError::internal("remote descriptor has no binary"))?
-                .argv
-        } else if !caller_argv.is_empty() {
-            caller_argv
-        } else if let Some(command) = p.kind.command().filter(|command| !command.is_empty()) {
-            vec![captured.shell.clone(), "-lc".into(), command.to_string()]
-        } else if kind == homie_proto::AgentKind::SHELL_ID {
-            vec![captured.shell.clone(), "-l".into()]
-        } else {
-            return Err(ControlError::bad_request(format!(
-                "agent {kind:?} declares no binary, so argv is required"
-            )));
-        };
-        let mut pty = if descriptor.binary.is_some() {
-            descriptor
-                .remote_spawn_spec(&cwd, inherited, &launch_args)
-                .ok_or_else(|| ControlError::internal("remote descriptor has no binary"))?
-        } else {
-            let mut spec = crate::pty::PtySpec::new(argv, &cwd);
-            spec.env = shell_pty_environment(inherited);
-            spec
-        };
-        if let (Some(cols), Some(rows)) = (p.initial_cols, p.initial_rows) {
-            pty.cols = cols.clamp(2, u16::MAX as i64) as u16;
-            pty.rows = rows.clamp(2, u16::MAX as i64) as u16;
-        }
-
-        let token = crate::session::random_session_token()?;
-        let launch = homie_proto::remote_pty::LaunchRequest {
-            session_id: id.clone(),
-            session_token: token,
-            argv: pty.argv.clone(),
-            cwd: captured.cwd.clone(),
-            environment: pty
-                .env
-                .iter()
-                .map(
-                    |(name, value)| homie_proto::remote_pty::EnvironmentVariable {
-                        name: name.clone(),
-                        value: value.clone(),
-                    },
-                )
-                .collect(),
-            cols: pty.cols,
-            rows: pty.rows,
-            persistence,
-        };
-
-        let mut record = new_record(&id, &kind, &captured.cwd);
-        record.host = Some(host.id.clone());
-        record.project_id = crate::registry::session_project_id(&captured.cwd, Some(&host.id));
-        record.remote_persistence = Some(persistence);
-        record.parent = p.parent.clone();
-        record.agent_session_id = agent_session_id;
-        if let Some(title) = &p.title {
-            record.title = title.clone();
-            record.title_source = homie_proto::TitleSource::HomieAssigned;
-        }
-        let spec = crate::session::SessionSpec {
-            id: id.clone(),
-            pty,
-            manifest_id: kind.clone(),
-            authority,
-            logs_dir: self.logs_dir.clone(),
-            holder: None,
-            remote: Some(crate::session::RemoteSessionSpec {
-                manager,
-                helper,
-                launch,
-                host_id: host.id.clone(),
-                binding_store,
-            }),
-            defer_launch: false,
-        };
+        let plan =
+            crate::session::remote_spawn_spec(&self.launch_context(), descriptor, p, caller_argv)?;
+        let id = plan.spec.id.clone();
         let mut registry = self.registry.lock().map_err(poisoned)?;
-        registry.ensure_session_project(&captured.cwd, Some(&host.id));
+        registry.ensure_session_project(&plan.project_root, plan.host_id.as_deref());
         registry
-            .spawn(spec, record)
+            .spawn(plan.spec, plan.record)
             .map_err(|error| ControlError::internal(error.to_string()))?;
         let _ = registry.persist();
         self.publish_updated(&registry, &id);
 
-        let prompt = p.initial_prompt.filter(|prompt| !prompt.is_empty());
-        if kind == homie_proto::AgentKind::CLAUDE_CODE_ID || prompt.is_some() {
-            let registry = Arc::clone(&self.registry);
-            let session_id = id.clone();
-            std::thread::spawn(move || {
-                prepare_agent_input(
-                    &registry,
-                    &session_id,
-                    kind == homie_proto::AgentKind::CLAUDE_CODE_ID,
-                    prompt.as_deref(),
-                );
-            });
-        }
+        self.schedule_initial_prompt(&kind, plan.prompt, &id);
         let record = registry
             .records()
             .into_iter()
             .find(|record| record.id.0 == id)
             .ok_or_else(|| ControlError::internal("the new remote session vanished"))?;
         serde_json::to_value(&record).map_err(|error| ControlError::internal(error.to_string()))
+    }
+
+    /// Types the initial prompt once the TUI can actually receive input, and
+    /// verifies it on screen afterward. Shared by local and remote spawn.
+    fn schedule_initial_prompt(&self, kind: &str, prompt: Option<String>, id: &str) {
+        if kind == homie_proto::AgentKind::CLAUDE_CODE_ID || prompt.is_some() {
+            let registry = Arc::clone(&self.registry);
+            let session_id = id.to_string();
+            let is_claude = kind == homie_proto::AgentKind::CLAUDE_CODE_ID;
+            std::thread::spawn(move || {
+                prepare_agent_input(&registry, &session_id, is_claude, prompt.as_deref());
+            });
+        }
     }
 
     /// `test.run` / `browser.act`: the Playwright sidecar, launched lazily.
@@ -816,6 +539,7 @@ impl ControlServer {
             inject_dir: self.injection.as_ref().map(|i| i.inject_dir.clone()),
             cli_path: self.injection.as_ref().map(|i| i.cli_path.clone()),
             mcp: self.injection.as_ref().and_then(|i| i.mcp.clone()),
+            gateway: self.injection.as_ref().and_then(|i| i.gateway.clone()),
             socket_path: self.socket_path.clone(),
             logs_dir: self.logs_dir.clone(),
             holder: self.holder.clone(),
@@ -1452,10 +1176,4 @@ pub(crate) fn new_record(id: &str, kind: &str, cwd: &str) -> homie_proto::Sessio
         listening_ports: None,
         foreground_agent: None,
     }
-}
-
-pub(super) fn shell_pty_environment(mut inherited: Vec<(String, String)>) -> Vec<(String, String)> {
-    inherited.retain(|(key, _)| key != "TERM" && key != "NO_COLOR");
-    inherited.push(("TERM".into(), "xterm-256color".into()));
-    inherited
 }

@@ -59,7 +59,9 @@
 - T1 ✅ spec review + functional cases 已写（`docs/verification/engine-session-runtime-split/`）。
 - T2–T6 ✅ session 拆分完成，单文件均 < 800 行，`cargo check`/`test`/`clippy`/`fmt` 全绿。
 - T7 ✅ resume spec 下沉至 `session/launch.rs`，`LaunchContext` 参数化，handler 薄适配。
-- T8 ⏳ 部分完成：`session_resume`/`session_resume_from_history`/`remote_resume_spec`/`resume_spec`
-  已下沉；`session_spawn`/`session_spawn_remote`/`session_migrate` 的 spawn-spec 组装下沉待做。
+- T8 ✅ `session_spawn` → `session::spawn_spec`、`session_spawn_remote` → `session::remote_spawn_spec`
+  下沉完成；`session_resume`/`session_resume_from_history` 已薄化。`session_migrate` 的迁移阶段
+  （WIP commit / push / hard-sync）属编排而非 spawn-spec 组装，保留在 handler，其 resume 调用已下沉。
+  `control/handlers.rs` 由 1,461 行降至 1,179 行，无私有字段 pokes。
 - T9 ⏳ 证据已写（spec-review / functional-cases / functional-verification / failure-model /
-  release-readiness）；S7 spawn/migrate 下沉完成后补 code-review round 并统一打 tag。
+  release-readiness）；补 code-review round 并统一打 tag。

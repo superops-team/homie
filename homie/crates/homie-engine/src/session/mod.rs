@@ -349,6 +349,24 @@ pub struct SessionSpec {
     pub defer_launch: bool,
 }
 
+/// Everything `session_spawn` / `session_spawn_remote` assemble before the
+/// handler registers the project, spawns the session, publishes the update,
+/// and types the initial prompt. Bundling it here keeps the handler a thin
+/// adapter while leaving the registry mutation (and therefore the mutex
+/// discipline) in the transport layer.
+pub struct SpawnPlan {
+    pub spec: SessionSpec,
+    pub record: homie_proto::SessionRecord,
+    pub prompt: Option<String>,
+    /// The project root to register with `ensure_session_project`: the
+    /// *caller's* cwd for a local spawn (a linked worktree is an execution
+    /// cwd, not a new first-level project) and the captured remote cwd
+    /// otherwise.
+    pub project_root: String,
+    /// Remote host id, `Some` only for remote spawns.
+    pub host_id: Option<String>,
+}
+
 /// Convenience for tests and callers that just want the shipped rules.
 pub fn load_engine(manifests: &Path) -> std::io::Result<(Arc<ManifestEngine>, Vec<String>)> {
     let (engine, failed) = ManifestEngine::load_dir(manifests)?;
@@ -385,7 +403,9 @@ mod remote;
 mod screen;
 mod status;
 
-pub(crate) use launch::{LaunchContext, random_session_token, remote_resume_spec, resume_spec};
+pub(crate) use launch::{
+    LaunchContext, remote_resume_spec, remote_spawn_spec, resume_spec, spawn_spec,
+};
 pub(crate) use lifecycle::holder_io_error;
 pub(crate) use pump::{evaluate_if_screen_changed, pump_held, pump_loop, scan_artifacts_if_due};
 pub(crate) use remote::pump_remote;

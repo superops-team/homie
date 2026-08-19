@@ -9,6 +9,9 @@
 1. `session.rs`（2,888 行）拆分为 `session/{lifecycle,screen,pty,status,pump,remote,launch,mod}.rs`，行为不变。
 2. resume spec 构造（`resume_spec` / `remote_resume_spec`）从 `control/handlers.rs` 下沉到
    `session/launch.rs`，通过 `LaunchContext` 参数化；handler 退化为 decode→domain→encode 薄适配。
+3. spawn spec 构造（`spawn_spec` / `remote_spawn_spec`）下沉到 `session/launch.rs`，返回
+   `SpawnPlan`（spec + record + prompt + project_root + host_id）；`session_spawn` /
+   `session_spawn_remote` 退化为薄适配，registry mutation 与 mutex 纪律保留在 handler。
 
 ## Gate results
 
@@ -31,11 +34,11 @@
 | `session/remote.rs` | 433 |
 | `session/mod.rs` | 399 |
 | `session/screen.rs` | 362 |
-| `session/launch.rs` | 256 |
+| `session/launch.rs` | 644 |
 | `session/pty.rs` | 203 |
 | `session/status.rs` | 196 |
 
-`control/handlers.rs` 由 1,607 行降至 1,454 行（resume spec 下沉后）。
+`control/handlers.rs` 由 1,607 行降至 1,179 行（resume + spawn spec 下沉后）。
 
 ## 行为保持锚点
 

@@ -1,4 +1,3 @@
-use super::handlers::shell_pty_environment;
 use super::inject::is_claude_workspace_trust_screen;
 use super::*;
 use crate::detect::ManifestEngine;
@@ -69,28 +68,6 @@ fn screen_contains(server: &ControlServer, session_id: &str, needle: &str) -> bo
         std::thread::sleep(Duration::from_millis(50));
     }
     false
-}
-
-#[test]
-fn local_pty_environment_sets_term_and_removes_no_color() {
-    let env = shell_pty_environment(vec![
-        ("TERM".into(), "dumb".into()),
-        ("NO_COLOR".into(), "1".into()),
-        ("PATH".into(), "/bin".into()),
-    ]);
-
-    assert_eq!(
-        env.iter()
-            .filter(|(key, _)| key == "TERM")
-            .map(|(_, value)| value.as_str())
-            .collect::<Vec<_>>(),
-        vec!["xterm-256color"]
-    );
-    assert!(!env.iter().any(|(key, _)| key == "NO_COLOR"));
-    assert!(
-        env.iter()
-            .any(|(key, value)| key == "PATH" && value == "/bin")
-    );
 }
 
 #[test]

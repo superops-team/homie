@@ -9,6 +9,8 @@
 1. `session.rs` → `session/{mod,lifecycle,screen,pty,status,pump,remote,launch}.rs`，单文件 < 800 行。
 2. `resume_spec` / `remote_resume_spec` 下沉至 `session/launch.rs`，以 `LaunchContext` 参数化；
    `control/handlers.rs` 中对应 handler 退化为薄适配。
+3. `spawn_spec` / `remote_spawn_spec` 下沉至 `session/launch.rs`，返回 `SpawnPlan`；
+   `session_spawn` / `session_spawn_remote` 退化为薄适配，`control/handlers.rs` 由 1,461 行降至 1,179 行。
 
 ## 质量门
 
@@ -21,9 +23,9 @@
 
 ## 未完成（后续 child）
 
-`session_spawn` / `session_spawn_remote` / `session_migrate` 的 spawn-spec 组装下沉（S7）
-尚未完成，属本 change 的剩余部分，作为后续增量交付；wire 协议与行为保持不变。
+`session_migrate` 的迁移阶段（WIP commit / push / hard-sync）属编排逻辑，保留在 handler；
+其 resume 调用已下沉。无其余未完成项。
 
 ## 结论
 
-拆分 + resume spec 下沉已完成且验证充分，可提交（暂不打 tag，待 S7 完成后统一打 tag）。
+拆分 + resume/spawn spec 下沉均已完成且验证充分，可提交（暂不打 tag，待 code-review round 后统一打 tag）。
