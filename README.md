@@ -49,8 +49,7 @@ graph TD
     Daemon -->|"spawn · PTY master"| Holder["homie-holder (--manager)"]
     Holder -->|"spawn · injected argv/env"| Agent["agent<br/>(Claude Code / Codex / shell)"]
 
-    Agent -->|"MCP stdio"| MCP["homie-mcp"]
-    MCP -->|"spawn homie subcommand"| CLI
+    Agent -->|"MCP streamable-http (loopback · bearer)"| Daemon
 
     Agent -->|"LLM request · virtual key"| Daemon
     Daemon -->|"embedded LLM proxy → upstream"| Provider["OpenAI-compatible provider"]
@@ -69,7 +68,6 @@ graph TD
 | `homied-rs` | `homie-engine` | **authoritative daemon/runtime** — PTY orchestration, session registry & persistence, control socket, **embedded LLM gateway** | background, `flock` singleton |
 | `homie-holder` | `homie-engine` | owns the PTY master so sessions survive an Engine restart; `--manager` hosts all holders of one registry | daemon lifetime (idle 30s) |
 | `homie-node` | `homie-node` | remote execution node (VPS): accounts, provider login, credential custody | remote systemd user service |
-| `homie-mcp` | `homie-mcp` | MCP shim injected into agents; exposes `homie` tools | one per agent |
 | `homie-remote` | `homie-remote` | remote PTY helper (SSH bootstrap / compatibility path) | on demand, remote |
 | `homie-ssh-askpass` | `homie-engine` | macOS OpenSSH askpass broker | on demand |
 
@@ -104,7 +102,6 @@ Key invariants:
 | `homie-pty` | PTY abstraction |
 | `homie-node` | remote node service: accounts, provider login, credential custody (`credentials`) |
 | `homie-remote` | remote PTY helper binary |
-| `homie-mcp` | MCP bridge binary (injected into agents) |
 | `homie-updater` | update/install support |
 | `homie-usage` | usage domain types and token estimation |
 | `homie-gateway` | LLM gateway **library** (virtual keys, OpenAI-compatible proxy, upstream forwarding, per-key usage); embedded in the daemon, no standalone binary |
@@ -197,16 +194,11 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant A1 as agent A
-    participant M as homie-mcp
-    participant C as homie CLI
-    participant D as homied-rs
+    participant D as homied-rs (embedded MCP)
 
-    A1->>M: MCP tool call (spawn/watch/send_text)
-    M->>C: invoke subcommand
-    C->>D: session.* (control socket)
-    D-->>C: result
-    C-->>M: JSON
-    M-->>A1: tool result (output, status, artifact)
+    A1->>D: POST /mcp (Authorization: Bearer · X-Homie-Session-Id)
+    D->>D: auth · caller session id · tool dispatch
+    D-->>A1: streamable-http tool result (output, status, artifact)
 ```
 
 ### 5. LLM gateway (embedded in daemon)

@@ -36,14 +36,13 @@ worktree setup.
 | `homie-pty` | PTY abstraction |
 | `homie-node` | Remote node service |
 | `homie-remote` | Remote helper package |
-| `homie-mcp` | MCP bridge binary |
 | `homie-updater` | Update/install support |
 | `homie-usage` | Usage domain types and helpers |
 | `homie-gateway` | LLM gateway library (virtual keys, OpenAI-compatible proxy, upstream forwarding, per-key usage); embedded in daemon, no standalone binary |
 
 ## 4. Swift Package
 
-Swift is retained for CLI/protocol/core/MCP glue and shared package resources.
+Swift is retained for CLI/protocol/core glue and shared package resources.
 Rust Engine is the daemon/runtime authority. Do not reintroduce Swift daemon or
 holder paths without a new PRD/spec.
 
