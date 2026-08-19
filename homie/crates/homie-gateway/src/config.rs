@@ -19,7 +19,7 @@ pub struct GatewayConfig {
     pub base_url: String,
     pub api_key: String,
     pub master_key: Option<String>,
-    /// Per-agent upstream model map (`codex` / `claude` → model name). Optional.
+    /// OpenAI agent upstream model map (`codex` → model name). Optional.
     pub models: BTreeMap<String, String>,
     /// Optional gateway policy (rate limit / quota). `None` means no limits.
     pub policy: Option<Policy>,
@@ -34,7 +34,7 @@ pub struct GatewayConfig {
 struct FileConfig {
     gateway: GatewaySection,
     upstream: UpstreamSection,
-    /// Per-agent upstream model map (`codex` / `claude` → model name).
+    /// OpenAI agent upstream model map (`codex` → model name).
     #[serde(default)]
     models: BTreeMap<String, String>,
     /// Optional gateway policy. `None` means no limits.
@@ -254,16 +254,12 @@ mod tests {
                 base_url: "https://api.example.com/v1".into(),
                 api_key: "sk-x".into(),
             },
-            models: BTreeMap::from([
-                ("codex".to_string(), "gpt-5.2-codex".to_string()),
-                ("claude".to_string(), "claude-sonnet-4-5".to_string()),
-            ]),
+            models: BTreeMap::from([("codex".to_string(), "gpt-5.2-codex".to_string())]),
             policy: None,
             credential_source: CredentialSource::Static,
         };
         let cfg = GatewayConfig::from_file(file).expect("valid");
         assert_eq!(cfg.models["codex"], "gpt-5.2-codex");
-        assert_eq!(cfg.models["claude"], "claude-sonnet-4-5");
     }
 
     #[test]

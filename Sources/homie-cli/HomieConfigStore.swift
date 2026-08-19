@@ -5,7 +5,7 @@ import SQLite3
 #endif
 
 /// The canonical local gateway config (`homie.local.json`), shared byte-for-byte
-/// with the Rust `homie-gateway` binary. The Swift CLI reads and writes the same
+/// with the Rust daemon (`homied-rs`). The Swift CLI reads and writes the same
 /// JSON schema so a value set here is what the gateway loads at startup.
 struct HomieLocalConfig: Codable, Equatable {
     var gateway: GatewaySection
@@ -32,7 +32,7 @@ struct VirtualKeyRow: Equatable {
 
 /// Atomic read/write of `homie.local.json`, secret masking, and read-only
 /// access to the gateway's virtual-key SQLite. The CLI never writes SQLite —
-/// key lifecycle belongs to the gateway.
+/// key lifecycle belongs to the daemon.
 enum HomieConfigStore {
     static let defaultListen = "127.0.0.1:7338"
 
@@ -58,7 +58,7 @@ enum HomieConfigStore {
         HomieLocalConfig(
             gateway: GatewaySection(listen: defaultListen, masterKey: nil),
             upstream: UpstreamSection(baseUrl: "", apiKey: ""),
-            models: ["codex": "", "claude": ""]
+            models: ["codex": ""]
         )
     }
 

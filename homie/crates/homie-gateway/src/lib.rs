@@ -1,10 +1,10 @@
-//! Homie local LLM gateway library. The `homie-gateway` binary is a thin shell
-//! over this library; integration tests exercise it directly.
+//! Homie local LLM gateway library, embedded in the daemon (no standalone
+//! binary). Exposes the OpenAI-compatible proxy routes, virtual-key store,
+//! usage recording, policy, and upstream forwarding.
 
 pub mod auth;
 pub mod config;
 pub mod db;
-pub mod inject;
 pub mod policy;
 pub mod routes;
 pub mod state;

@@ -1,7 +1,8 @@
 //! End-to-end gateway slice, exercised directly through the axum router:
-//! virtual key → `/v1/responses` / `/v1/messages` → wiremock upstream →
-//! per-key usage recorded. No real network: the upstream is a wiremock server
-//! bound to loopback, and the SQLite store lives in a temp dir.
+//! virtual key → `/v1/responses` → wiremock upstream → per-key usage recorded.
+//! No real network: the upstream is a wiremock server bound to loopback, and
+//! the SQLite store lives in a temp dir. Virtual keys are minted through the
+//! in-process store (the daemon mints at spawn; there is no HTTP admin face).
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -21,7 +22,7 @@ const MASTER: &str = "master-key";
 
 /// A running app + its temp-dir-backed SQLite, plus the wiremock upstream URI.
 struct Harness {
-    db: Db,
+    state: AppState,
     app: axum::Router,
 }
 
@@ -42,33 +43,16 @@ fn spawn(
         false,
     );
     let state = AppState::new(db.clone(), upstream, master_key, models, policy);
-    let app = homie_gateway::routes::router(state);
-    Harness { db, app }
+    let app = homie_gateway::routes::router(state.clone());
+    Harness { state, app }
 }
 
 impl Harness {
-    /// Issue a virtual key through the master-protected admin surface.
-    async fn create_key(&self, label: &str) -> (String, String) {
-        let resp = self
-            .app
-            .clone()
-            .oneshot(
-                Request::post("/admin/keys")
-                    .header(header::AUTHORIZATION, format!("Bearer {MASTER}"))
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        serde_json::json!({ "label": label }).to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED);
-        let body = resp.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        let id = json["id"].as_str().unwrap().to_owned();
-        let key = json["key"].as_str().unwrap().to_owned();
-        (id, key)
+    /// Mint a virtual key through the in-process store (what the daemon does
+    /// at spawn).
+    fn mint_key(&self, label: &str) -> (String, String) {
+        let created = self.state.keys.create(Some(label.into())).expect("mint");
+        (created.id, created.key)
     }
 
     async fn call(&self, method: &str, uri: &str, key: &str, body: &str) -> (StatusCode, Vec<u8>) {
@@ -95,7 +79,7 @@ impl Harness {
     }
 
     fn usage_rows(&self) -> Vec<(String, String, i64, i64)> {
-        let conn = self.db.conn();
+        let conn = self.state.db.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT key_id, model, input_tokens, output_tokens FROM gateway_usage ORDER BY id",
@@ -128,7 +112,7 @@ async fn responses_slice_records_usage_per_key() {
     .await;
     let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
-    let (id, key) = harness.create_key("codex").await;
+    let (id, key) = harness.mint_key("codex");
     let (status, bytes) = harness
         .call(
             "POST",
@@ -151,17 +135,11 @@ async fn responses_slice_records_usage_per_key() {
 }
 
 #[tokio::test]
-async fn messages_slice_uses_same_virtual_key() {
+async fn messages_route_is_gone() {
     let server = MockServer::start().await;
-    upstream_at(
-        &server,
-        "/messages",
-        r#"{"id":"m1","usage":{"input_tokens":3,"output_tokens":9}}"#,
-    )
-    .await;
     let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
-    let (id, key) = harness.create_key("claude").await;
+    let (_, key) = harness.mint_key("codex");
     let (status, _) = harness
         .call(
             "POST",
@@ -171,13 +149,8 @@ async fn messages_slice_uses_same_virtual_key() {
         )
         .await;
 
-    assert_eq!(status, StatusCode::OK);
-    let rows = harness.usage_rows();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].0, id);
-    assert_eq!(rows[0].1, "claude-sonnet-4");
-    assert_eq!(rows[0].2, 3);
-    assert_eq!(rows[0].3, 9);
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(harness.usage_rows().is_empty());
 }
 
 #[tokio::test]
@@ -200,12 +173,9 @@ async fn revoked_key_returns_unauthorized() {
     upstream_at(&server, "/responses", r#"{"ok":true}"#).await;
     let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
-    let (id, key) = harness.create_key("temp").await;
-    // Revoke via admin.
-    let (status, _) = harness
-        .call("DELETE", &format!("/admin/keys/{id}"), MASTER, "")
-        .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (id, key) = harness.mint_key("temp");
+    // Revoke through the store.
+    assert!(harness.state.keys.delete(&id).expect("delete"));
 
     let (status, _) = harness
         .call("POST", "/v1/responses", &key, r#"{"model":"m"}"#)
@@ -234,27 +204,6 @@ async fn master_key_is_accepted_but_not_usage_recorded() {
 }
 
 #[tokio::test]
-async fn admin_requires_master_key() {
-    let server = MockServer::start().await;
-    let harness = spawn(None, &server.uri(), BTreeMap::new(), None);
-
-    // No master key configured → admin surface is closed (403).
-    let (status, _) = harness.call("GET", "/admin/keys", "whatever", "").await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn virtual_key_cannot_admin() {
-    let server = MockServer::start().await;
-    let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
-    let (_, key) = harness.create_key("codex").await;
-
-    // A virtual key must not reach the admin surface (401).
-    let (status, _) = harness.call("GET", "/admin/keys", &key, "").await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
 async fn codex_model_is_rewritten_before_forward_and_recorded() {
     let server = MockServer::start().await;
     upstream_at(
@@ -266,7 +215,7 @@ async fn codex_model_is_rewritten_before_forward_and_recorded() {
     let models = BTreeMap::from([("codex".to_string(), "gpt-5.2-codex".to_string())]);
     let harness = spawn(Some(MASTER.into()), &server.uri(), models, None);
 
-    let (id, key) = harness.create_key("codex").await;
+    let (id, key) = harness.mint_key("codex");
     let (status, _) = harness
         .call(
             "POST",
@@ -285,35 +234,6 @@ async fn codex_model_is_rewritten_before_forward_and_recorded() {
 }
 
 #[tokio::test]
-async fn claude_model_is_rewritten_before_forward_and_recorded() {
-    let server = MockServer::start().await;
-    upstream_at(
-        &server,
-        "/messages",
-        r#"{"id":"m-route","usage":{"input_tokens":2,"output_tokens":8}}"#,
-    )
-    .await;
-    let models = BTreeMap::from([("claude".to_string(), "claude-sonnet-4".to_string())]);
-    let harness = spawn(Some(MASTER.into()), &server.uri(), models, None);
-
-    let (id, key) = harness.create_key("claude").await;
-    let (status, _) = harness
-        .call(
-            "POST",
-            "/v1/messages",
-            &key,
-            r#"{"model":"claude-3","messages":[]}"#,
-        )
-        .await;
-
-    assert_eq!(status, StatusCode::OK);
-    let rows = harness.usage_rows();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].0, id);
-    assert_eq!(rows[0].1, "claude-sonnet-4");
-}
-
-#[tokio::test]
 async fn unconfigured_model_passes_through_unchanged() {
     let server = MockServer::start().await;
     upstream_at(
@@ -324,7 +244,7 @@ async fn unconfigured_model_passes_through_unchanged() {
     .await;
     let harness = spawn(Some(MASTER.into()), &server.uri(), BTreeMap::new(), None);
 
-    let (_, key) = harness.create_key("codex").await;
+    let (_, key) = harness.mint_key("codex");
     let (status, _) = harness
         .call(
             "POST",
@@ -361,7 +281,7 @@ async fn rate_limit_rejects_excess_requests() {
         Some(policy),
     );
 
-    let (_, key) = harness.create_key("codex").await;
+    let (_, key) = harness.mint_key("codex");
     let (status, _) = harness
         .call("POST", "/v1/responses", &key, r#"{"model":"gpt-5"}"#)
         .await;
@@ -401,7 +321,7 @@ async fn quota_rejects_when_daily_limit_exceeded() {
         Some(policy),
     );
 
-    let (_, key) = harness.create_key("codex").await;
+    let (_, key) = harness.mint_key("codex");
     // First request records 5 + 5 = 10 tokens.
     let (status, _) = harness
         .call("POST", "/v1/responses", &key, r#"{"model":"gpt-5"}"#)

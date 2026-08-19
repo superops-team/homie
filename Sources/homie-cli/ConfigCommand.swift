@@ -8,7 +8,7 @@ struct Config: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "config",
         abstract: "View and edit Homie's LLM gateway configuration.",
-        subcommands: [ConfigShow.self, ConfigGet.self, ConfigSet.self, ConfigAgent.self]
+        subcommands: [ConfigShow.self, ConfigGet.self, ConfigSet.self]
     )
 }
 
@@ -31,7 +31,6 @@ struct ConfigShow: ParsableCommand {
         print("upstream.apiKey  \(HomieConfigStore.mask(config.upstream.apiKey))")
         print("gateway.masterKey \(HomieConfigStore.mask(config.gateway.masterKey))")
         print("models.codex     \(config.models["codex"] ?? "")")
-        print("models.claude    \(config.models["claude"] ?? "")")
 
         let keys = HomieConfigStore.virtualKeys()
         if keys.isEmpty {
@@ -67,7 +66,6 @@ struct ConfigGet: ParsableCommand {
         case "upstream.apiKey": value = HomieConfigStore.mask(config.upstream.apiKey)
         case "gateway.masterKey": value = HomieConfigStore.mask(config.gateway.masterKey)
         case "models.codex": value = config.models["codex"] ?? ""
-        case "models.claude": value = config.models["claude"] ?? ""
         default:
             FileHandle.standardError.write(Data("homie: unknown key path: \(keyPath)\n".utf8))
             throw ExitCode.failure
@@ -99,15 +97,11 @@ struct ConfigSet: ParsableCommand {
     @Option(name: .customLong("model-codex"), help: "Codex model id.")
     var modelCodex: String?
 
-    @Option(name: .customLong("model-claude"), help: "Claude model id.")
-    var modelClaude: String?
-
     func run() throws {
         var config = HomieConfigStore.read() ?? HomieConfigStore.empty
         if let listen { config.gateway.listen = listen }
         if let baseUrl { config.upstream.baseUrl = baseUrl }
         if let modelCodex { config.models["codex"] = modelCodex }
-        if let modelClaude { config.models["claude"] = modelClaude }
 
         if apiKeyFromStdin {
             config.upstream.apiKey = ConfigSet.readSecret(fromStdin: true, envVar: "HOMIE_UPSTREAM_API_KEY") ?? config.upstream.apiKey
@@ -134,87 +128,5 @@ struct ConfigSet: ParsableCommand {
         }
         if let v = ProcessInfo.processInfo.environment[envVar], !v.isEmpty { return v }
         return nil
-    }
-}
-
-// MARK: - agent
-
-struct ConfigAgent: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "agent",
-        abstract: "Preview the exact injection a codex/claude spawn receives."
-    )
-
-    @Argument(help: "Agent: codex or claude.")
-    var agent: String
-
-    @Flag(name: .long, help: "Emit human-readable lines instead of JSON.")
-    var text = false
-
-    func run() throws {
-        guard ["codex", "claude"].contains(agent.lowercased()) else {
-            FileHandle.standardError.write(Data("homie: unknown agent \(agent)\n".utf8))
-            throw ExitCode.failure
-        }
-        guard let binary = ConfigAgent.gatewayBinary() else {
-            FileHandle.standardError.write(
-                Data("homie: homie-gateway binary not found; cannot preview injection\n".utf8))
-            throw ExitCode.failure
-        }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = ["inject", "--agent", agent.lowercased()]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch {
-            FileHandle.standardError.write(Data("homie: failed to run gateway: \(error)\n".utf8))
-            throw ExitCode.failure
-        }
-        let out = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0, let raw = String(data: out, encoding: .utf8) else {
-            FileHandle.standardError.write(Data("homie: gateway inject failed\n".utf8))
-            throw ExitCode.failure
-        }
-
-        if text {
-            print(ConfigAgent.humanize(raw))
-        } else {
-            print(raw.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-    }
-
-    /// Locate the Rust `homie-gateway` binary: installed bin dir, then a sibling
-    /// of the CLI (dev builds), then PATH.
-    static func gatewayBinary() -> String? {
-        let candidates = [
-            HomiePaths.binDir.appendingPathComponent("homie-gateway").path,
-            URL(fileURLWithPath: CommandLine.arguments[0])
-                .deletingLastPathComponent().appendingPathComponent("homie-gateway").path,
-        ]
-        for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
-            return path
-        }
-        return CLISupport.which("homie-gateway")
-    }
-
-    /// Minimal human-readable rendering of the JSON injection preview.
-    static func humanize(_ raw: String) -> String {
-        guard let data = raw.data(using: .utf8),
-            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let agent = obj["agent"] as? String
-        else { return raw }
-        var lines = ["agent: \(agent)"]
-        if let args = obj["args"] as? [String], !args.isEmpty {
-            lines.append("args:")
-            lines.append(contentsOf: args.map { "  \($0)" })
-        }
-        if let env = obj["env"] as? [[String]] {
-            lines.append("env:")
-            lines.append(contentsOf: env.map { "  \($0[0])=\($0[1])" })
-        }
-        return lines.joined(separator: "\n")
     }
 }

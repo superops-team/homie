@@ -5,15 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "homie-gateway"
-path = "src/main.rs"
 
 [dependencies]
 homie-usage.workspace = true
-homie-engine.workspace = true
 homie-node.workspace = true
-axum = { version = "0.8", features = ["json"] }
+axum.workspace = true
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
 getrandom.workspace = true

@@ -53,8 +53,6 @@ pub struct InjectionSpec {
     pub codex_mcp: bool,
     #[serde(default, rename = "codexGateway")]
     pub codex_gateway: bool,
-    #[serde(default, rename = "claudeGateway")]
-    pub claude_gateway: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]

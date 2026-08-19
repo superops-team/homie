@@ -142,6 +142,7 @@ impl ControlServer {
         // quoted inside the shell's `-c` command.
         let mut launch_args = argv.clone();
         let mut agent_session_id = None;
+        let mut gateway_runtime = None;
         if descriptor.binary.is_some() {
             launch_args.extend(descriptor.spawn_args.iter().cloned());
             agent_session_id = descriptor.session_id_flag.as_ref().map(|flag| {
@@ -151,11 +152,21 @@ impl ControlServer {
                 uuid
             });
             if let Some(injection) = &self.injection {
+                // Mint a per-session virtual key before assembling argv so the
+                // same runtime feeds both the Codex `-c` overrides and env.
+                if descriptor.injection.codex_gateway
+                    && let Some(issuer) = &injection.gateway
+                {
+                    match issuer.mint(Some(id.clone())) {
+                        Ok(runtime) => gateway_runtime = Some(runtime),
+                        Err(error) => eprintln!("homied-rs: virtual key mint failed: {error}"),
+                    }
+                }
                 launch_args.extend(crate::inject::injection_args(
                     &descriptor.injection,
                     &injection.inject_dir,
                     &injection.cli_path,
-                    injection.gateway.as_ref(),
+                    gateway_runtime.as_ref(),
                 ));
             }
         }
@@ -208,7 +219,7 @@ impl ControlServer {
                     crate::inject::CLI_ENV.into(),
                     injection.cli_path.to_string_lossy().into_owned(),
                 ));
-                if let Some(runtime) = &injection.gateway {
+                if let Some(runtime) = &gateway_runtime {
                     pty.env
                         .extend(crate::inject::gateway_env(&descriptor.injection, runtime));
                 }
@@ -1316,17 +1327,6 @@ impl ControlServer {
                 crate::inject::CLI_ENV.into(),
                 injection.cli_path.to_string_lossy().into_owned(),
             ));
-            if let Some(runtime) = &injection.gateway {
-                // Claude routes through env vars, so a resumed session keeps
-                // pointing at the gateway; Codex `-c` overrides are not
-                // replayed here (matching the existing replay rule).
-                let claude_only = crate::agent::InjectionSpec {
-                    claude_gateway: descriptor.injection.claude_gateway,
-                    ..Default::default()
-                };
-                pty.env
-                    .extend(crate::inject::gateway_env(&claude_only, runtime));
-            }
         }
         Ok(crate::session::SessionSpec {
             id: id.to_string(),

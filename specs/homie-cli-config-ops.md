@@ -12,9 +12,10 @@ repairs Homie's LLM gateway configuration.
 
 The `homie` CLI (Swift, `Sources/homie-cli/Homie.swift`) is the user-facing
 entry point. It reads and writes one canonical local config file, shared with
-the Rust `homie-gateway` binary, and reads the gateway's SQLite store read-only.
-The Rust `homie-engine::inject::injection_args()` remains the single source of
-truth for agent config injection; the CLI never reimplements it.
+the Rust daemon (`homied-rs`), and reads the gateway's SQLite store read-only.
+The Rust `homie-engine::inject` module remains the single source of truth for
+agent config injection; the CLI never reimplements it (and no longer exposes an
+injection preview — see §4.3).
 
 ## 3. Config File Contract
 
@@ -30,7 +31,7 @@ truth for agent config injection; the CLI never reimplements it.
 {
   "gateway":   { "listen": "127.0.0.1:7338", "masterKey": null },
   "upstream":  { "baseUrl": "https://api.openai.com/v1", "apiKey": "sk-..." },
-  "models":    { "codex": "gpt-5.2-codex", "claude": "claude-sonnet-4-5" }
+  "models":    { "codex": "gpt-5.2-codex" }
 }
 ```
 
@@ -50,28 +51,29 @@ truth for agent config injection; the CLI never reimplements it.
 ### 4.2 `homie config set`
 
 - Settable keys: `upstream.baseUrl`, `upstream.apiKey`, `gateway.listen`,
-  `gateway.masterKey`, `models.codex`, `models.claude`.
+  `gateway.masterKey`, `models.codex`.
 - Secrets may be provided via `--api-key-from-stdin` or environment to avoid
   shell history; never force a plain `--api-key` value onto argv.
 - Writes are atomic and owner-only.
 
-### 4.3 `homie config agent <codex|claude>`
+### 4.3 `homie config agent` (removed)
 
-- Emits the exact injection result produced by `homie-engine::inject::injection_args()`
-  for the selected agent: Codex `-c` overrides, or Claude `ANTHROPIC_BASE_URL` /
-  `ANTHROPIC_AUTH_TOKEN` environment.
-- Output is JSON by default for scriptability; a human-readable form is
-  available via a non-JSON flag.
-- The CLI delegates to the Rust `homie-gateway inject --agent <agent>` to
-  guarantee parity with real spawn-time injection.
+- The `config agent` injection preview is **removed**. It previously delegated to
+  the `homie-gateway inject` subcommand, which no longer exists now that the LLM
+  gateway is embedded in the daemon and injection happens daemon-internally at
+  spawn time.
+- Claude Code receives no gateway injection at all (it uses its native Anthropic
+  credentials; Homie manages only its hooks + MCP orchestration).
+- Codex injection (gateway virtual key + model routing) is produced by
+  `homie-engine::inject` at spawn time; there is no standalone preview surface.
 
 ### 4.4 `homie doctor`
 
 - Retains the original three checks (daemon socket, `claude`/`codex` binaries,
   state file).
-- Adds: gateway reachability, upstream credential presence/validity, virtual
-  key effectiveness, and agent config pointing to the gateway (not a real
-  provider).
+- Adds: daemon-embedded gateway reachability, upstream credential
+  presence/validity, virtual key effectiveness, and agent config pointing to
+  the local gateway (not a real provider).
 - Each check reports `✓`/`✗`; any failure yields a non-zero exit code.
 
 ### 4.5 `homie fix`
@@ -84,16 +86,17 @@ truth for agent config injection; the CLI never reimplements it.
 
 ## 5. Injection Parity Contract
 
-The `config agent` preview and the actual spawn-time injection MUST derive from
-the same Rust function (`injection_args()`). A unit test must assert the two
-outputs are shape-equal. This prevents configuration drift between what an
-agent previews and what it actually receives.
+Spawn-time injection is produced exclusively by `homie-engine::inject` inside
+the daemon (Codex only). There is no separate CLI preview surface, so there is
+no drift risk between a preview and real spawn-time injection. A unit test must
+assert that a Codex spawn with gateway routing enabled receives the virtual key
+and model routing produced by the inject module.
 
 ## 6. Virtual Key Read Contract
 
 The CLI reads the gateway SQLite store read-only to surface virtual key status.
 The CLI never writes to that store; key lifecycle (create/delete) is the
-gateway's exclusive responsibility.
+daemon's exclusive responsibility.
 
 ## 7. Security And Recovery
 

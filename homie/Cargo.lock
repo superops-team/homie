@@ -2676,8 +2676,10 @@ name = "homie-engine"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "axum",
  "base64 0.23.1",
  "getrandom 0.4.3",
+ "homie-gateway",
  "homie-proto",
  "homie-pty",
  "homie-terminal-state",
@@ -2691,6 +2693,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -2700,7 +2703,6 @@ dependencies = [
  "axum",
  "futures-util",
  "getrandom 0.4.3",
- "homie-engine",
  "homie-node",
  "homie-usage",
  "http-body-util",

@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+homie-gateway.workspace = true
+axum.workspace = true
+tokio.workspace = true
 alacritty_terminal.workspace = true
 base64.workspace = true
 homie-proto.workspace = true

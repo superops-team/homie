@@ -134,26 +134,6 @@ pub async fn authenticate(
     }
 }
 
-/// Master-key-only gate for the local admin surface. Rejects with 403 when
-/// no master key is configured, 401 on a bad or missing key.
-pub async fn require_master(
-    State(state): State<AppState>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let Some(master) = &state.master_key else {
-        return (StatusCode::FORBIDDEN, "master key not configured").into_response();
-    };
-    let Some(key) = extract_key(request.headers()) else {
-        return unauthorized();
-    };
-    if constant_time_eq(master.as_bytes(), key.as_bytes()) {
-        next.run(request).await
-    } else {
-        unauthorized()
-    }
-}
-
 fn resolve_caller<B>(state: &AppState, request: &Request<B>) -> Option<Caller> {
     let key = extract_key(request.headers())?;
     if let Some(master) = &state.master_key

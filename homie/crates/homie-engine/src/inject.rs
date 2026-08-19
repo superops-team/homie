@@ -29,9 +29,8 @@ pub const CODEX_GATEWAY_ENV: &str = "HOMIE_CODEX_GATEWAY_KEY";
 /// Runtime facts about the local LLM gateway injected into agents that opt in.
 ///
 /// `base_url` is the gateway root (e.g. `http://127.0.0.1:7338`); Codex gets
-/// `<base_url>/v1` as its OpenAI-compatible base, Claude Code gets `base_url`
-/// directly as `ANTHROPIC_BASE_URL`. `virtual_key` is a `sk-…` issued to the
-/// session and never shown after issuance.
+/// `<base_url>/v1` as its OpenAI-compatible base. `virtual_key` is a `sk-…`
+/// issued to the session and never shown after issuance.
 #[derive(Clone, Debug)]
 pub struct GatewayRuntime {
     pub base_url: String,
@@ -41,6 +40,35 @@ pub struct GatewayRuntime {
 impl GatewayRuntime {
     fn codex_base_url(&self) -> String {
         format!("{}/v1", self.base_url.trim_end_matches('/'))
+    }
+}
+
+/// Where the daemon mints per-session virtual keys. The daemon holds this
+/// (built from its embedded gateway `AppState`) and mints a fresh `sk-…` key
+/// for every spawn that opts into the gateway.
+#[derive(Clone)]
+pub struct GatewayIssuer {
+    pub base_url: String,
+    pub keys: homie_gateway::auth::GatewayApiKeyStore,
+}
+
+impl std::fmt::Debug for GatewayIssuer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never render the key store (it wraps a live SQLite connection).
+        f.debug_struct("GatewayIssuer")
+            .field("base_url", &self.base_url)
+            .finish_non_exhaustive()
+    }
+}
+
+impl GatewayIssuer {
+    /// Mint a fresh virtual key for a session and build its runtime.
+    pub fn mint(&self, label: Option<String>) -> Result<GatewayRuntime, String> {
+        let created = self.keys.create(label).map_err(|e| e.to_string())?;
+        Ok(GatewayRuntime {
+            base_url: self.base_url.clone(),
+            virtual_key: created.key,
+        })
     }
 }
 
@@ -61,29 +89,18 @@ pub fn codex_gateway_args(runtime: &GatewayRuntime) -> Vec<String> {
     ]
 }
 
-/// Environment a Claude Code session needs to route through the gateway.
-pub fn claude_gateway_env(runtime: &GatewayRuntime) -> Vec<(String, String)> {
-    vec![
-        ("ANTHROPIC_BASE_URL".into(), runtime.base_url.clone()),
-        ("ANTHROPIC_AUTH_TOKEN".into(), runtime.virtual_key.clone()),
-    ]
-}
-
 /// Environment a Codex session needs to supply the virtual key.
 pub fn codex_gateway_env(runtime: &GatewayRuntime) -> Vec<(String, String)> {
     vec![(CODEX_GATEWAY_ENV.into(), runtime.virtual_key.clone())]
 }
 
-/// Combined session env for gateway routing, gated by each agent's opt-in.
+/// Combined session env for gateway routing, gated by the agent's opt-in.
 pub fn gateway_env(injection: &InjectionSpec, runtime: &GatewayRuntime) -> Vec<(String, String)> {
-    let mut env = Vec::new();
-    if injection.claude_gateway {
-        env.extend(claude_gateway_env(runtime));
-    }
     if injection.codex_gateway {
-        env.extend(codex_gateway_env(runtime));
+        codex_gateway_env(runtime)
+    } else {
+        Vec::new()
     }
-    env
 }
 
 /// A random v4 UUID in the lowercase-hex form Claude accepts as
@@ -425,27 +442,6 @@ mod tests {
             ..Default::default()
         };
         assert!(injection_args(&opt, temp.path(), &cli, None).is_empty());
-    }
-
-    #[test]
-    fn claude_gateway_env_sets_anthropic_base_and_token() {
-        let runtime = GatewayRuntime {
-            base_url: "http://127.0.0.1:7338".into(),
-            virtual_key: "sk-abc123".into(),
-        };
-        let env = claude_gateway_env(&runtime);
-        assert_eq!(env.len(), 2);
-        assert_eq!(
-            env[0],
-            (
-                "ANTHROPIC_BASE_URL".to_owned(),
-                "http://127.0.0.1:7338".to_owned()
-            )
-        );
-        assert_eq!(
-            env[1],
-            ("ANTHROPIC_AUTH_TOKEN".to_owned(), "sk-abc123".to_owned())
-        );
     }
 
     #[test]

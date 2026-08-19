@@ -116,13 +116,14 @@ fn main() {
     let registry = Arc::new(Mutex::new(registry));
 
     let cli_path = exe_dir.join("homie");
+    let gateway = start_gateway();
     let mut server = ControlServer::new(Arc::clone(&registry), app_support.join("daemon.sock"))
         .with_logs_dir(&logs_dir)
         .with_holder(holder)
         .with_injection(InjectionConfig {
             inject_dir: app_support.join("inject"),
             cli_path,
-            gateway: None,
+            gateway,
         });
     if let Some(remote) = remote_manager(&exe_dir, &app_support) {
         server = server.with_remote(remote);
@@ -199,6 +200,92 @@ fn app_support_dir() -> PathBuf {
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     Path::new(&home).join("Library/Application Support/Homie")
+}
+
+#[cfg(unix)]
+/// Load the embedded LLM gateway config, open its store, and start the
+/// OpenAI-compatible `/v1/responses` listener on a dedicated tokio runtime
+/// thread. Returns the spawn-time key issuer, or `None` when the gateway is
+/// unavailable (missing/invalid config, unopenable DB, or a port conflict) —
+/// the daemon then continues serving orchestration without LLM proxying.
+fn start_gateway() -> Option<homie_engine::inject::GatewayIssuer> {
+    use homie_gateway::config::{CredentialSource, GatewayConfig, config_path, db_path};
+
+    let config = match GatewayConfig::load(&config_path()) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("homied-rs: LLM gateway disabled: {error}");
+            return None;
+        }
+    };
+    let db = match homie_gateway::db::Db::open(&db_path()) {
+        Ok(db) => db,
+        Err(error) => {
+            eprintln!("homied-rs: LLM gateway DB open failed: {error}");
+            return None;
+        }
+    };
+    let prefer_node = config.credential_source == CredentialSource::Node;
+    let upstream = homie_gateway::upstream::Upstream::new(
+        config.base_url.clone(),
+        config.api_key.clone(),
+        prefer_node,
+    );
+    let state = homie_gateway::state::AppState::new(
+        db,
+        upstream,
+        config.master_key.clone(),
+        config.models.clone(),
+        config.policy.clone(),
+    );
+    let issuer = homie_engine::inject::GatewayIssuer {
+        base_url: format!("http://{}", config.listen),
+        keys: state.keys.clone(),
+    };
+
+    // Bind synchronously so a port conflict surfaces at startup rather than on
+    // the first proxied request, then hand the listener to a tokio thread.
+    let std_listener = match std::net::TcpListener::bind(config.listen) {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!(
+                "homied-rs: LLM gateway bind {} failed: {error}",
+                config.listen
+            );
+            return None;
+        }
+    };
+    let _ = std_listener.set_nonblocking(true);
+    let listener = match tokio::net::TcpListener::from_std(std_listener) {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("homied-rs: LLM gateway listener init failed: {error}");
+            return None;
+        }
+    };
+
+    let _ = std::thread::Builder::new()
+        .name("homied-gateway".into())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    eprintln!("homied-rs: LLM gateway runtime init failed: {error}");
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                eprintln!("homied-rs: LLM gateway listening on {}", config.listen);
+                let app = homie_gateway::routes::router(state);
+                let _ = axum::serve(listener, app).await;
+            });
+        });
+
+    Some(issuer)
 }
 
 #[cfg(unix)]

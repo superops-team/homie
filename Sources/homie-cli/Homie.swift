@@ -288,7 +288,7 @@ struct Doctor: ParsableCommand {
         if !keys.isEmpty {
             print("✓ \(keys.count) virtual key(s) issued")
         } else {
-            print("✗ no virtual keys issued (gateway not initialized)")
+            print("✗ no virtual keys issued (daemon not initialized)")
             ok = false
         }
 

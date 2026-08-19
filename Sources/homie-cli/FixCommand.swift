@@ -37,7 +37,7 @@ struct Fix: ParsableCommand {
         if GatewayProbe.gatewayRunning(host: host, port: port) {
             print("skip: gateway running")
         } else {
-            print("fix: gateway not running — start with `homie-gateway` (not auto-spawned)")
+            print("fix: gateway not running — start the daemon with `homied-rs` (not auto-spawned)")
         }
 
         // 4. Port conflict: a foreign listener holds the configured port.

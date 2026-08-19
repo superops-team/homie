@@ -18,9 +18,11 @@ and a daemon restart brings conversations back.
   everything is still there.
 - **Agents can orchestrate agents.** An MCP server lets a running agent spawn another one,
   watch it, read its output, and answer its prompts.
-- **One credential entrypoint.** Homie owns the LLM configuration. Real provider credentials
-  live in Homie; managed agents receive virtual keys and call Homie's OpenAI-compatible proxy,
-  which applies policy, records usage, and forwards upstream.
+- **One credential entrypoint for OpenAI-compatible agents.** Homie owns the LLM configuration
+  for Codex and other OpenAI-compatible agents. Real provider credentials live in Homie; managed
+  agents receive virtual keys and call Homie's daemon-embedded OpenAI-compatible proxy, which
+  applies policy, records usage, and forwards upstream. Claude Code keeps its native Anthropic
+  credentials (Homie still manages its hooks + MCP orchestration, not its LLM traffic).
 
 First-class status detection and resume are Claude Code and Codex. Cursor and Gemini run with
 partial support, and anything else runs as a terminal with running/exited status.
@@ -46,9 +48,9 @@ graph TD
 
     Daemon -->|"SSH remote PTY"| Remote["homie-remote (helper)"]
 
-    Agent -->|"LLM request · virtual key"| GW["homie-gateway"]
-    GW -->|"upstream forward"| Provider["OpenAI-compatible provider"]
-    GW -.->|"library-embedded credential resolve"| Node["homie-node (remote VPS service)"]
+    Agent -->|"LLM request · virtual key"| Daemon
+    Daemon -->|"embedded LLM proxy · upstream forward"| Provider["OpenAI-compatible provider"]
+    Daemon -.->|"library-embedded credential resolve"| Node["homie-node (remote VPS service)"]
 ```
 
 ### Process model
@@ -57,9 +59,8 @@ graph TD
 |---------|----------------|------|----------|
 | `homie` (app) | `homie-app` | GPUI desktop: window, sidebar, terminal renderer, palette, usage | foreground |
 | `homie` (CLI) | Swift `homie-cli` | `status` / `doctor` / hooks / notify forwarder | on demand |
-| `homied-rs` | `homie-engine` | **authoritative daemon/runtime** — PTY orchestration, session registry & persistence, control socket | background, `flock` singleton |
+| `homied-rs` | `homie-engine` | **authoritative daemon/runtime** — PTY orchestration, session registry & persistence, control socket, **embedded LLM gateway** | background, `flock` singleton |
 | `homie-holder` | `homie-engine` | owns the PTY master so sessions survive an Engine restart; `--manager` hosts all holders of one registry | daemon lifetime (idle 30s) |
-| `homie-gateway` | `homie-gateway` | local LLM gateway: virtual keys, OpenAI/Anthropic-compatible proxy, upstream forwarding, per-key usage | standalone |
 | `homie-node` | `homie-node` | remote execution node (VPS): accounts, provider login, credential custody | remote systemd user service |
 | `homie-mcp` | `homie-mcp` | MCP shim injected into agents; exposes `homie` tools | one per agent |
 | `homie-remote` | `homie-remote` | remote PTY helper (SSH bootstrap / compatibility path) | on demand, remote |
@@ -76,7 +77,7 @@ Key invariants:
   `homie/crates/homie-engine/manifests/`; spawn flags, resume keys, prompt approval, and screen
   status rules are all declared there.
 - **Credentials stay where the agent runs.** Homie never copies raw provider tokens into
-  managed-agent config; it issues virtual keys and forwards through `homie-gateway`.
+  managed-agent config; it issues virtual keys and forwards through the daemon-embedded LLM proxy.
 
 ---
 
@@ -99,16 +100,16 @@ Key invariants:
 | `homie-mcp` | MCP bridge binary (injected into agents) |
 | `homie-updater` | update/install support |
 | `homie-usage` | usage domain types and token estimation |
-| `homie-gateway` | local LLM gateway: virtual keys, proxy, upstream forwarding, per-key usage |
+| `homie-gateway` | LLM gateway **library** (virtual keys, OpenAI-compatible proxy, upstream forwarding, per-key usage); embedded in the daemon, no standalone binary |
 
 Dependency direction (simplified):
 
 ```
 homie-app ─▶ homie-ui, homie-client
 homie-client ─▶ homie-proto
-homie-engine ─▶ homie-proto, homie-pty, homie-term, homie-terminal-state, homie-usage
+homie-engine ─▶ homie-proto, homie-pty, homie-term, homie-terminal-state, homie-usage, homie-gateway (embedded LLM proxy)
 homie-node ─▶ homie-client, homie-proto
-homie-gateway ─▶ homie-usage, homie-engine (inject), homie-node (credentials)
+homie-gateway ─▶ homie-usage, homie-node (credentials)
 homie-remote ─▶ homie-proto
 ```
 
@@ -201,26 +202,26 @@ sequenceDiagram
     M-->>A1: tool result (output, status, artifact)
 ```
 
-### 5. LLM gateway
+### 5. LLM gateway (embedded in daemon)
 
 ```mermaid
 sequenceDiagram
     participant A as agent
-    participant G as homie-gateway
+    participant D as homied-rs (embedded gateway)
     participant N as homie-node
     participant U as upstream provider
 
-    A->>G: POST /v1/responses|messages (virtual key)
-    G->>G: auth virtual key · policy/quota · model routing
-    G->>G: resolve upstream credential
+    A->>D: POST /v1/responses (virtual key)
+    D->>D: auth virtual key · policy/quota · model routing
+    D->>D: resolve upstream credential
     alt credentialSource = node
-        G->>N: resolve_default_codex_credential (library-embedded)
-        N-->>G: {kind, base_url, token}
-        G->>G: fallback to static apiKey on failure
+        D->>N: resolve_default_codex_credential (library-embedded)
+        N-->>D: {kind, base_url, token}
+        D->>D: fallback to static apiKey on failure
     end
-    G->>U: forward (server-side upstream key only)
-    U-->>G: streaming (SSE) response
-    G-->>A: stream + record per-key usage
+    D->>U: forward (server-side upstream key only)
+    U-->>D: streaming (SSE) response
+    D-->>A: stream + record per-key usage
 ```
 
 ### 6. Remote node (VPS)

@@ -58,9 +58,10 @@ pub struct ControlServer {
 pub struct InjectionConfig {
     pub inject_dir: PathBuf,
     pub cli_path: PathBuf,
-    /// When set, agents that opt into `codexGateway`/`claudeGateway` route
-    /// their LLM traffic through the local gateway with this runtime.
-    pub gateway: Option<crate::inject::GatewayRuntime>,
+    /// When set, agents that opt into `codexGateway` route their LLM traffic
+    /// through the local gateway; the daemon mints a per-session virtual key
+    /// at spawn via this issuer.
+    pub gateway: Option<crate::inject::GatewayIssuer>,
 }
 
 impl ControlServer {
