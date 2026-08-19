@@ -404,7 +404,7 @@ mod screen;
 mod status;
 
 pub(crate) use launch::{
-    LaunchContext, remote_resume_spec, remote_spawn_spec, resume_spec, spawn_spec,
+    LaunchContext, remote_resume_spec, remote_spawn_spec, resolve_host, resume_spec, spawn_spec,
 };
 pub(crate) use lifecycle::holder_io_error;
 pub(crate) use pump::{evaluate_if_screen_changed, pump_held, pump_loop, scan_artifacts_if_due};

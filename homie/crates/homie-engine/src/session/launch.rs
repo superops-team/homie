@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use homie_proto::ControlError;
 
+use crate::control::io_control_error;
 use crate::registry::Registry;
 use crate::remote::binding::RemoteBindingStore;
 use crate::remote::manager::RemoteManager;
@@ -53,12 +54,11 @@ fn random_session_token() -> Result<homie_proto::remote_pty::SessionToken, Contr
 
 /// Resolves a host id against the daemon's `hosts.json`, exactly as the
 /// transport layer did.
-pub fn resolve_host(
-    ctx: &LaunchContext,
+pub(crate) fn resolve_host(
+    socket_path: &Path,
     host_id: &str,
 ) -> Result<homie_proto::HostEntry, ControlError> {
-    let hosts_file = ctx
-        .socket_path
+    let hosts_file = socket_path
         .parent()
         .map(|parent| parent.join("hosts.json"))
         .unwrap_or_else(|| PathBuf::from("hosts.json"));
@@ -69,15 +69,6 @@ pub fn resolve_host(
         .ok_or_else(|| {
             ControlError::bad_request(format!("unknown host {host_id:?}; check hosts.json"))
         })
-}
-
-/// Maps an I/O error onto the control channel's error vocabulary, mirroring
-/// the transport layer so remote spec errors keep identical codes/messages.
-fn io_control_error(error: std::io::Error) -> ControlError {
-    match error.kind() {
-        std::io::ErrorKind::NotFound => ControlError::not_found(error.to_string()),
-        _ => ControlError::internal(error.to_string()),
-    }
 }
 
 /// The spawn spec that re-enters a local conversation: the manifest's resume
@@ -176,7 +167,7 @@ pub fn remote_resume_spec(
         .host
         .as_deref()
         .ok_or_else(|| ControlError::bad_request("remote record has no host"))?;
-    let host = resolve_host(ctx, host_id)?;
+    let host = resolve_host(&ctx.socket_path, host_id)?;
     let helper = manager.ensure_helper(&host).map_err(io_control_error)?;
     let persistence = manager
         .probe_persistence(&host, &helper)
@@ -461,7 +452,7 @@ pub fn remote_spawn_spec(
         .host
         .as_deref()
         .ok_or_else(|| ControlError::bad_request("remote host is required"))?;
-    let host = resolve_host(ctx, host_id)?;
+    let host = resolve_host(&ctx.socket_path, host_id)?;
     if p.new_worktree.unwrap_or(false) {
         return Err(ControlError::bad_request(
             "remote worktree creation requires the structured workspace RPC",

@@ -63,5 +63,5 @@
   下沉完成；`session_resume`/`session_resume_from_history` 已薄化。`session_migrate` 的迁移阶段
   （WIP commit / push / hard-sync）属编排而非 spawn-spec 组装，保留在 handler，其 resume 调用已下沉。
   `control/handlers.rs` 由 1,461 行降至 1,179 行，无私有字段 pokes。
-- T9 ⏳ 证据已写（spec-review / functional-cases / functional-verification / failure-model /
-  release-readiness）；补 code-review round 并统一打 tag。
+- T9 ✅ code-review round 已完成（`docs/verification/engine-session-runtime-split/code-review-report.md`，
+  两轮审查 + 去重修复）。统一打 tag 待用户确认后再执行。

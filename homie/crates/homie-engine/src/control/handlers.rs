@@ -554,13 +554,7 @@ impl ControlServer {
         &self,
         host_id: &str,
     ) -> Result<homie_proto::HostEntry, ControlError> {
-        homie_proto::HostsConfig::load(self.hosts_file())
-            .hosts
-            .into_iter()
-            .find(|entry| entry.id == host_id)
-            .ok_or_else(|| {
-                ControlError::bad_request(format!("unknown host {host_id:?}; check hosts.json"))
-            })
+        crate::session::resolve_host(&self.socket_path, host_id)
     }
 
     /// Applies the current application build's remote environment gate before

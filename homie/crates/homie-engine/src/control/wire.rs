@@ -86,7 +86,7 @@ pub(super) fn migrate_control_error(error: MigrateError) -> ControlError {
 }
 
 /// Maps an I/O error onto the control channel's error vocabulary.
-pub(super) fn io_control_error(error: std::io::Error) -> ControlError {
+pub(crate) fn io_control_error(error: std::io::Error) -> ControlError {
     match error.kind() {
         std::io::ErrorKind::NotFound => ControlError::not_found(error.to_string()),
         _ => ControlError::internal(error.to_string()),

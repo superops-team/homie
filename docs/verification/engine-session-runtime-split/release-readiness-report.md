@@ -28,4 +28,5 @@
 
 ## 结论
 
-拆分 + resume/spawn spec 下沉均已完成且验证充分，可提交（暂不打 tag，待 code-review round 后统一打 tag）。
+拆分 + resume/spawn spec 下沉均已完成且验证充分，code-review round 已完成并去重
+（见 `code-review-report.md`）。暂不打 tag，待用户确认后按 SemVer 统一打 tag。

@@ -30,6 +30,7 @@ mod runtime;
 mod wire;
 pub(crate) use handlers::new_record;
 use runtime::{ActiveConnectionGuard, SubscriptionHandle};
+pub(crate) use wire::io_control_error;
 use wire::{decode, encode, poisoned, write_message};
 
 /// Identifies this engine in the handshake, so a client can tell which
