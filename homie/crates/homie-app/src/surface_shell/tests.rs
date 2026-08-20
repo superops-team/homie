@@ -1,3 +1,4 @@
+use super::host_init::expire_completed_reinstall;
 use super::widgets::setting_row;
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
