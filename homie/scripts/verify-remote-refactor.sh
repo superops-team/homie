@@ -69,10 +69,10 @@ for path in sorted(glob.glob('${manifests}/*.json')):
 # Handoff refused every call: the remote branch errored and local->local was
 # rejected as 'already local'.
 check "session.migrate refuses only without a transport" \
-    grep -q 'self.remote.is_none()' crates/homie-engine/src/control/handlers.rs
+    grep -q 'self.remote.is_none()' crates/homie-engine/src/control/handlers/migrate.rs
 
 check "resume relaunches a session whose Agent died" \
-    grep -q 'Evicting the corpse' crates/homie-engine/src/control/handlers.rs
+    grep -q 'Evicting the corpse' crates/homie-engine/src/control/handlers/resume.rs
 
 check "toolchain stays on the version main ships" \
     grep -q 'channel = "1.97.1"' rust-toolchain.toml
