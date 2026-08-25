@@ -172,11 +172,21 @@ impl GatewayConfig {
             base_url: base_url.to_owned(),
             api_key: file.upstream.api_key,
             master_key: file.gateway.master_key,
-            models: file.models,
+            models: normalize_models(file.models),
             policy: file.policy,
             credential_source: file.credential_source,
         })
     }
+}
+
+fn normalize_models(models: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    models
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let value = value.trim();
+            (!value.is_empty()).then(|| (key, value.to_owned()))
+        })
+        .collect()
 }
 
 /// Read only the gateway listen address for the `inject` preview, defaulting
@@ -260,6 +270,31 @@ mod tests {
         };
         let cfg = GatewayConfig::from_file(file).expect("valid");
         assert_eq!(cfg.models["codex"], "gpt-5.2-codex");
+    }
+
+    #[test]
+    fn blank_model_overrides_are_ignored_at_config_load() {
+        let file = FileConfig {
+            gateway: GatewaySection {
+                listen: default_listen(),
+                master_key: Some("m".into()),
+            },
+            upstream: UpstreamSection {
+                base_url: "https://api.example.com/v1".into(),
+                api_key: "sk-x".into(),
+            },
+            models: BTreeMap::from([
+                ("codex".to_string(), "".to_string()),
+                ("claude".to_string(), " \t\n ".to_string()),
+                ("opencode".to_string(), " gpt-5 ".to_string()),
+            ]),
+            policy: None,
+            credential_source: CredentialSource::Static,
+        };
+        let cfg = GatewayConfig::from_file(file).expect("valid");
+        assert!(!cfg.models.contains_key("codex"));
+        assert!(!cfg.models.contains_key("claude"));
+        assert_eq!(cfg.models["opencode"], "gpt-5");
     }
 
     #[test]

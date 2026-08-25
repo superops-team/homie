@@ -74,10 +74,13 @@ no longer routed through the gateway and uses its native Anthropic credentials.
   name). It is `#[serde(default)]`; absent is valid.
 - Before forwarding, the gateway rewrites the request body's top-level `model`
   string by route key: `POST /v1/responses` → `models["codex"]`.
-- Override semantics: rewrite only when the `models` entry exists; otherwise
-  pass the original `model` through unchanged. A non-JSON body or a
+- Override semantics: rewrite only when the `models` entry exists and its value
+  is non-empty after trimming whitespace; otherwise pass the original `model`
+  through unchanged. A non-JSON body or a
   missing/non-string top-level `model` is passed through unchanged (never an
   error).
+- Empty model overrides from old or hand-edited configs are treated as
+  unconfigured so a managed agent can still use its own default model.
 - Usage recording uses the rewritten model, reflecting the model actually routed
   upstream.
 - The daemon is the single source of truth for model routing; spawn-time

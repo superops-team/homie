@@ -101,7 +101,7 @@ struct ConfigSet: ParsableCommand {
         var config = HomieConfigStore.read() ?? HomieConfigStore.empty
         if let listen { config.gateway.listen = listen }
         if let baseUrl { config.upstream.baseUrl = baseUrl }
-        if let modelCodex { config.models["codex"] = modelCodex }
+        ConfigSet.applyModelCodex(modelCodex, to: &config)
 
         if apiKeyFromStdin {
             config.upstream.apiKey = ConfigSet.readSecret(fromStdin: true, envVar: "HOMIE_UPSTREAM_API_KEY") ?? config.upstream.apiKey
@@ -128,5 +128,15 @@ struct ConfigSet: ParsableCommand {
         }
         if let v = ProcessInfo.processInfo.environment[envVar], !v.isEmpty { return v }
         return nil
+    }
+
+    static func applyModelCodex(_ value: String?, to config: inout HomieLocalConfig) {
+        guard let value else { return }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            config.models.removeValue(forKey: "codex")
+        } else {
+            config.models["codex"] = trimmed
+        }
     }
 }

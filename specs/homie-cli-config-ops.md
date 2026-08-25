@@ -35,6 +35,11 @@ injection preview — see §4.3).
 }
 ```
 
+- `models` is optional and defaults to `{}`. Empty or whitespace-only model
+  values are equivalent to absent entries.
+- The CLI must not create an empty `models.codex` placeholder. Setting
+  `models.codex` to an empty or whitespace-only value removes that override so
+  the agent keeps using its own default model.
 - `apiKey` and `masterKey` are secrets; they live only in this ignored file,
   never in git, logs, or agent-visible config.
 
@@ -52,6 +57,8 @@ injection preview — see §4.3).
 
 - Settable keys: `upstream.baseUrl`, `upstream.apiKey`, `gateway.listen`,
   `gateway.masterKey`, `models.codex`.
+- `models.codex` is an override, not a required startup setting: a non-empty
+  value writes the override, while an empty or whitespace-only value deletes it.
 - Secrets may be provided via `--api-key-from-stdin` or environment to avoid
   shell history; never force a plain `--api-key` value onto argv.
 - Writes are atomic and owner-only.

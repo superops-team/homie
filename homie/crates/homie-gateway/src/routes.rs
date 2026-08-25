@@ -126,16 +126,19 @@ fn apply_model_route(
     key: &str,
     body: &[u8],
 ) -> Vec<u8> {
-    let Some(target) = models.get(key) else {
+    let Some(target) = models.get(key).map(|target| target.trim()) else {
         return body.to_vec();
     };
+    if target.is_empty() {
+        return body.to_vec();
+    }
     let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
         return body.to_vec();
     };
     if let Some(model) = value.as_object_mut().and_then(|obj| obj.get_mut("model"))
         && model.is_string()
     {
-        *model = serde_json::Value::String(target.clone());
+        *model = serde_json::Value::String(target.to_owned());
     }
     serde_json::to_vec(&value).unwrap_or_else(|_| body.to_vec())
 }
@@ -179,6 +182,16 @@ mod tests {
         let models = std::collections::BTreeMap::new();
         let body = br#"{"model":"gpt-5"}"#;
         assert_eq!(apply_model_route(&models, "codex", body), body);
+    }
+
+    #[test]
+    fn apply_model_route_passes_through_blank_targets() {
+        for blank in ["", " \t\n "] {
+            let models =
+                std::collections::BTreeMap::from([("codex".to_string(), blank.to_string())]);
+            let body = br#"{"model":"gpt-5"}"#;
+            assert_eq!(apply_model_route(&models, "codex", body), body);
+        }
     }
 
     #[test]

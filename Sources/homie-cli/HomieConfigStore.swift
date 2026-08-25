@@ -11,6 +11,19 @@ struct HomieLocalConfig: Codable, Equatable {
     var gateway: GatewaySection
     var upstream: UpstreamSection
     var models: [String: String]
+
+    init(gateway: GatewaySection, upstream: UpstreamSection, models: [String: String]) {
+        self.gateway = gateway
+        self.upstream = upstream
+        self.models = models
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        gateway = try container.decode(GatewaySection.self, forKey: .gateway)
+        upstream = try container.decode(UpstreamSection.self, forKey: .upstream)
+        models = try container.decodeIfPresent([String: String].self, forKey: .models) ?? [:]
+    }
 }
 
 struct GatewaySection: Codable, Equatable {
@@ -58,7 +71,7 @@ enum HomieConfigStore {
         HomieLocalConfig(
             gateway: GatewaySection(listen: defaultListen, masterKey: nil),
             upstream: UpstreamSection(baseUrl: "", apiKey: ""),
-            models: ["codex": ""]
+            models: [:]
         )
     }
 

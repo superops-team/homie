@@ -53,6 +53,37 @@ private func parse<T: ParsableCommand>(_ argv: [String], as type: T.Type) throws
     #expect(config.models["codex"] == "m1")
 }
 
+@Test func configDecodesMissingModelsAsEmpty() throws {
+    let raw = #"{"gateway":{"listen":"127.0.0.1:7338","masterKey":null},"upstream":{"baseUrl":"https://api.example.com/v1","apiKey":"sk-x"}}"#
+    let config = try JSONDecoder().decode(HomieLocalConfig.self, from: Data(raw.utf8))
+
+    #expect(config.models.isEmpty)
+}
+
+@Test func emptyConfigDoesNotCreateABlankCodexModelOverride() {
+    #expect(HomieConfigStore.empty.models.isEmpty)
+}
+
+@Test func blankModelCodexRemovesTheOverride() {
+    var config = HomieLocalConfig(
+        gateway: GatewaySection(listen: "127.0.0.1:7338", masterKey: nil),
+        upstream: UpstreamSection(baseUrl: "https://api.example.com/v1", apiKey: "sk-x"),
+        models: ["codex": "gpt-5.2-codex"]
+    )
+
+    ConfigSet.applyModelCodex(" \n\t ", to: &config)
+
+    #expect(config.models["codex"] == nil)
+}
+
+@Test func nonBlankModelCodexIsTrimmedAndStored() {
+    var config = HomieConfigStore.empty
+
+    ConfigSet.applyModelCodex(" gpt-5.2-codex \n", to: &config)
+
+    #expect(config.models["codex"] == "gpt-5.2-codex")
+}
+
 // MARK: - command grammar
 
 @Test func configSubcommandsParse() throws {

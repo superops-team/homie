@@ -260,6 +260,33 @@ async fn unconfigured_model_passes_through_unchanged() {
 }
 
 #[tokio::test]
+async fn blank_configured_model_passes_agent_model_through() {
+    let server = MockServer::start().await;
+    upstream_at(
+        &server,
+        "/responses",
+        r#"{"id":"r-blank","usage":{"input_tokens":1,"output_tokens":1}}"#,
+    )
+    .await;
+    let models = BTreeMap::from([("codex".to_string(), "".to_string())]);
+    let harness = spawn(Some(MASTER.into()), &server.uri(), models, None);
+
+    let (_, key) = harness.mint_key("codex");
+    let (status, _) = harness
+        .call(
+            "POST",
+            "/v1/responses",
+            &key,
+            r#"{"model":"gpt-5","input":"hello"}"#,
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let rows = harness.usage_rows();
+    assert_eq!(rows[0].1, "gpt-5");
+}
+
+#[tokio::test]
 async fn rate_limit_rejects_excess_requests() {
     let server = MockServer::start().await;
     upstream_at(

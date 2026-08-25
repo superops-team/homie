@@ -466,6 +466,23 @@ mod tests {
     }
 
     #[test]
+    fn codex_gateway_args_do_not_override_the_agent_model() {
+        let runtime = GatewayRuntime {
+            base_url: "http://127.0.0.1:7338".into(),
+            virtual_key: "sk-abc123".into(),
+        };
+
+        let args = codex_gateway_args(&runtime);
+
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "model" || arg.starts_with("model=")),
+            "gateway injection should leave model selection to Codex unless the gateway rewrites a non-empty configured override: {args:?}"
+        );
+    }
+
+    #[test]
     fn mcp_env_exposes_only_the_token() {
         let mcp = test_mcp();
         let env = mcp_env(&mcp);
