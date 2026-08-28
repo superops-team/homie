@@ -1,0 +1,64 @@
+   Compiling homie-gateway v0.1.0 (/Users/bytedance/workspace/github/homie/homie/crates/homie-gateway)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.84s
+     Running unittests src/lib.rs (homie/target/debug/deps/homie_gateway-e5f283fe13868567)
+
+running 33 tests
+test auth::tests::random_hex_is_unique_and_sized ... ok
+test config::tests::credential_source_defaults_to_static ... ok
+test config::tests::loads_policy_when_present ... ok
+test config::tests::node_mode_allows_empty_api_key ... ok
+test config::tests::policy_defaults_to_none ... ok
+test config::tests::blank_model_overrides_are_ignored_at_config_load ... ok
+test config::tests::rejects_missing_upstream_credentials ... ok
+test config::tests::retains_models_map ... ok
+test config::tests::static_mode_rejects_empty_api_key ... ok
+test config::tests::trims_trailing_slash_from_base_url ... ok
+test config::tests::rejects_non_loopback_listen ... ok
+test policy::tests::deny_response_is_429_and_sanitized ... ok
+test policy::tests::rate_limiter_allows_within_window ... ok
+test policy::tests::rate_limiter_zero_means_unconfigured ... ok
+test policy::tests::rate_limiter_resets_on_new_window ... ok
+test routes::tests::apply_model_route_passes_through_blank_targets ... ok
+test routes::tests::apply_model_route_passes_through_non_json ... ok
+test routes::tests::apply_model_route_passes_through_non_string_model ... ok
+test routes::tests::apply_model_route_passes_through_when_key_missing ... ok
+test routes::tests::apply_model_route_rewrites_when_configured ... ok
+test routes::tests::extract_model_from_body ... ok
+test routes::tests::route_key_maps_only_responses_to_codex ... ok
+test upstream::tests::extracts_usage_when_present ... ok
+test upstream::tests::usage_absent_is_zero ... ok
+test policy::tests::quota_zero_means_unconfigured ... ok
+test policy::tests::quota_checks_cumulative_tokens ... ok
+test auth::tests::accept_updates_last_used ... ok
+test auth::tests::list_never_returns_raw_key ... ok
+test usage::tests::records_usage_per_key ... ok
+test auth::tests::create_then_accept_and_delete ... ok
+test upstream::tests::static_mode_resolves_static_key ... ok
+test upstream::tests::node_mode_without_any_credential_errors ... ok
+test upstream::tests::node_mode_falls_back_to_static_key ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/gateway.rs (homie/target/debug/deps/gateway-c53a9791695c1e74)
+
+running 11 tests
+test bad_key_is_rejected_and_never_forwarded ... ok
+test messages_route_is_gone ... ok
+test revoked_key_returns_unauthorized ... ok
+test master_key_is_accepted_but_not_usage_recorded ... ok
+test responses_slice_records_usage_per_key ... ok
+test blank_configured_model_passes_agent_model_through ... ok
+test quota_rejects_when_daily_limit_exceeded ... ok
+test unconfigured_model_passes_through_unchanged ... ok
+test master_key_bypasses_policy ... ok
+test codex_model_is_rewritten_before_forward_and_recorded ... ok
+test rate_limit_rejects_excess_requests ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+   Doc-tests homie_gateway
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,62 @@
+   Compiling homie-gateway v0.1.0 (/Users/bytedance/workspace/github/homie/homie/crates/homie-gateway)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.39s
+     Running unittests src/lib.rs (target/debug/deps/homie_gateway-e5f283fe13868567)
+
+running 33 tests
+test auth::tests::random_hex_is_unique_and_sized ... ok
+test config::tests::rejects_non_loopback_listen ... ok
+test config::tests::retains_models_map ... ok
+test config::tests::policy_defaults_to_none ... ok
+test config::tests::rejects_missing_upstream_credentials ... ok
+test config::tests::loads_policy_when_present ... ok
+test config::tests::node_mode_allows_empty_api_key ... ok
+test config::tests::blank_model_overrides_are_ignored_at_config_load ... ok
+test config::tests::credential_source_defaults_to_static ... ok
+test config::tests::static_mode_rejects_empty_api_key ... ok
+test config::tests::trims_trailing_slash_from_base_url ... ok
+test routes::tests::apply_model_route_passes_through_blank_targets ... ok
+test policy::tests::rate_limiter_zero_means_unconfigured ... ok
+test routes::tests::apply_model_route_passes_through_when_key_missing ... ok
+test routes::tests::apply_model_route_passes_through_non_string_model ... ok
+test routes::tests::apply_model_route_passes_through_non_json ... ok
+test policy::tests::deny_response_is_429_and_sanitized ... ok
+test policy::tests::rate_limiter_allows_within_window ... ok
+test policy::tests::rate_limiter_resets_on_new_window ... ok
+test routes::tests::apply_model_route_rewrites_when_configured ... ok
+test routes::tests::extract_model_from_body ... ok
+test routes::tests::route_key_maps_only_responses_to_codex ... ok
+test upstream::tests::extracts_usage_when_present ... ok
+test upstream::tests::usage_absent_is_zero ... ok
+test usage::tests::records_usage_per_key ... ok
+test policy::tests::quota_zero_means_unconfigured ... ok
+test auth::tests::list_never_returns_raw_key ... ok
+test policy::tests::quota_checks_cumulative_tokens ... ok
+test auth::tests::accept_updates_last_used ... FAILED
+test auth::tests::create_then_accept_and_delete ... FAILED
+test upstream::tests::static_mode_resolves_static_key ... ok
+test upstream::tests::node_mode_without_any_credential_errors ... ok
+test upstream::tests::node_mode_falls_back_to_static_key ... ok
+
+failures:
+
+---- auth::tests::accept_updates_last_used stdout ----
+
+thread 'auth::tests::accept_updates_last_used' (37770851) panicked at crates/homie-gateway/src/auth.rs:235:9:
+assertion failed: store.accept(&created.key).is_some()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- auth::tests::create_then_accept_and_delete stdout ----
+
+thread 'auth::tests::create_then_accept_and_delete' (37770852) panicked at crates/homie-gateway/src/auth.rs:212:9:
+assertion `left == right` failed
+  left: None
+ right: Some("e9e0a087b6e9a1dd868e8cd1aa86a780")
+
+
+failures:
+    auth::tests::accept_updates_last_used
+    auth::tests::create_then_accept_and_delete
+
+test result: FAILED. 31 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p homie-gateway --lib`

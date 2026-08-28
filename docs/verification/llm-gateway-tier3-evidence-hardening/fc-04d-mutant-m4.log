@@ -1,0 +1,56 @@
+   Compiling homie-gateway v0.1.0 (/Users/bytedance/workspace/github/homie/homie/crates/homie-gateway)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.07s
+     Running unittests src/lib.rs (homie/target/debug/deps/homie_gateway-e5f283fe13868567)
+
+running 33 tests
+test config::tests::credential_source_defaults_to_static ... ok
+test auth::tests::random_hex_is_unique_and_sized ... ok
+test config::tests::rejects_missing_upstream_credentials ... ok
+test config::tests::rejects_non_loopback_listen ... ok
+test config::tests::node_mode_allows_empty_api_key ... ok
+test config::tests::policy_defaults_to_none ... ok
+test config::tests::loads_policy_when_present ... ok
+test config::tests::retains_models_map ... ok
+test config::tests::blank_model_overrides_are_ignored_at_config_load ... ok
+test config::tests::static_mode_rejects_empty_api_key ... ok
+test config::tests::trims_trailing_slash_from_base_url ... ok
+test routes::tests::apply_model_route_passes_through_blank_targets ... ok
+test policy::tests::rate_limiter_zero_means_unconfigured ... ok
+test routes::tests::apply_model_route_passes_through_when_key_missing ... ok
+test policy::tests::deny_response_is_429_and_sanitized ... ok
+test policy::tests::rate_limiter_allows_within_window ... ok
+test routes::tests::apply_model_route_passes_through_non_json ... ok
+test routes::tests::extract_model_from_body ... ok
+test routes::tests::apply_model_route_rewrites_when_configured ... ok
+test policy::tests::rate_limiter_resets_on_new_window ... ok
+test routes::tests::route_key_maps_only_responses_to_codex ... ok
+test upstream::tests::extracts_usage_when_present ... ok
+test upstream::tests::usage_absent_is_zero ... ok
+test routes::tests::apply_model_route_passes_through_non_string_model ... FAILED
+test policy::tests::quota_zero_means_unconfigured ... ok
+test policy::tests::quota_checks_cumulative_tokens ... ok
+test auth::tests::accept_updates_last_used ... ok
+test auth::tests::list_never_returns_raw_key ... ok
+test auth::tests::create_then_accept_and_delete ... ok
+test usage::tests::records_usage_per_key ... ok
+test upstream::tests::static_mode_resolves_static_key ... ok
+test upstream::tests::node_mode_without_any_credential_errors ... ok
+test upstream::tests::node_mode_falls_back_to_static_key ... ok
+
+failures:
+
+---- routes::tests::apply_model_route_passes_through_non_string_model stdout ----
+
+thread 'routes::tests::apply_model_route_passes_through_non_string_model' (37774815) panicked at crates/homie-gateway/src/routes.rs:211:9:
+assertion `left == right` failed
+  left: String("gpt-5.2-codex")
+ right: 123
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    routes::tests::apply_model_route_passes_through_non_string_model
+
+test result: FAILED. 32 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p homie-gateway --lib`

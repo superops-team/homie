@@ -119,6 +119,29 @@ no longer routed through the gateway and uses its native Anthropic credentials.
 - Daemon restart restores virtual keys from SQLite.
 - Port conflicts fail the daemon with a clear error; the port is configurable.
 
+### 10.1 Failure Model
+
+The gateway's security-critical surface is held to Tier-3 verification
+(`docs/development/standards.md` §6.3). The authoritative failure model lives in
+`docs/verification/llm-gateway-tier3-evidence-hardening/failure-model.md`. This
+section is the durable contract summary:
+
+| Failure mode | Required behavior | Primary capture |
+|--------------|-------------------|-----------------|
+| Credential leak (upstream key / master key / raw virtual key) | Only SHA-256 hashes stored; raw key returned once; sanitized deny/error bodies | `list_never_returns_raw_key` + negative-control grep gate |
+| Virtual-key replay / unauthorized forward | 401 before any upstream call; no usage written | `bad_key_is_rejected_and_never_forwarded`, `revoked_key_returns_unauthorized` |
+| Model-route bypass via malformed body | Pass through unchanged, never panic | `apply_model_route_passes_through_*` |
+| Policy/quota bypass (`0` semantics, day boundary) | `0` = unconfigured; `SUM(input+output) < limit` | `rate_limiter_zero_means_unconfigured`, `quota_checks_cumulative_tokens` |
+| Concurrency race (rate-limit / quota / key creation) | Mutex-serialized rate limiter and DB access; unique key ids | `Arc<Mutex<RateLimiter>>`, `Arc<Mutex<Connection>>`, `random_hex_is_unique_and_sized` |
+| Partial write / data loss | Single-statement atomic inserts; WAL journal | `journal_mode=WAL`, usage-row assertions |
+| Malicious input (oversized / negative tokens / malformed JSON) | 64 MB body limit; graceful fallback; no panic | `DefaultBodyLimit`, `extract_usage` zero-fallback |
+
+Known limits (accepted, recorded in the failure model): no explicit UTC-midnight
+quota-boundary test; quota check and usage record are not in one transaction;
+negative token injection from a malicious upstream is not clamped; no crash-replay
+or restart-reopen persistence test. Any change to `homie-gateway` must re-run the
+failure-model evidence before landing.
+
 ## 11. Credential Source
 
 - `homie.local.json` may carry an optional `credentialSource` field; it is

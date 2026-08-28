@@ -90,8 +90,6 @@ pub fn start(
         serde_json::to_vec_pretty(&fact).ok()?,
     );
 
-    let _ = std_listener.set_nonblocking(true);
-    let listener = tokio::net::TcpListener::from_std(std_listener).ok()?;
     let state = McpHttpState {
         token,
         registry,
@@ -115,6 +113,17 @@ pub fn start(
                 }
             };
             runtime.block_on(async move {
+                // `from_std` registers the listener with the Tokio reactor, so
+                // it must run inside this runtime. Calling it on the (reactor-
+                // less) main thread panics with "there is no reactor running".
+                let _ = std_listener.set_nonblocking(true);
+                let listener = match tokio::net::TcpListener::from_std(std_listener) {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        eprintln!("homied-rs: MCP listener init failed: {error}");
+                        return;
+                    }
+                };
                 eprintln!("homied-rs: MCP listening on {base_url}");
                 let app = router(state);
                 let _ = axum::serve(listener, app).await;

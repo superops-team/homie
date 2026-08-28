@@ -1,0 +1,5 @@
+=== negative control: bad sample must be DETECTED ===
+/tmp/homie-evil-sample.rs:1:fn leaked() { let upstream_key = "sk-sample-0123456789abcdef0123456789abcdef"; let _ = upstream_key; }
+DETECTED (exit=0)
+=== production source: must be CLEAN ===
+CLEAN: no sk- 32+ char secret in gateway/src (exit=1)

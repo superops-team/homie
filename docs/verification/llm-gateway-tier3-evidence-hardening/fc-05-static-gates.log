@@ -1,0 +1,10 @@
+=== git diff --check (scoped to my change) ===
+exit=0
+=== Failure Model present in spec ===
+122:### 10.1 Failure Model
+=== my-change files status ===
+ M specs/llm-gateway.md
+?? docs/ai-coding-workflow-analysis.md
+?? docs/verification/llm-gateway-tier3-evidence-hardening/
+?? openspec/changes/llm-gateway-tier3-evidence-hardening/
+?? prd-spec/refactors/llm-gateway-tier3-evidence-hardening/

@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.90s
+     Running tests/gateway.rs (target/debug/deps/gateway-c53a9791695c1e74)
+
+running 11 tests
+test messages_route_is_gone ... ok
+test bad_key_is_rejected_and_never_forwarded ... ok
+test revoked_key_returns_unauthorized ... ok
+test master_key_is_accepted_but_not_usage_recorded ... ok
+test master_key_bypasses_policy ... ok
+test codex_model_is_rewritten_before_forward_and_recorded ... ok
+test unconfigured_model_passes_through_unchanged ... ok
+test blank_configured_model_passes_agent_model_through ... ok
+test quota_rejects_when_daily_limit_exceeded ... ok
+test responses_slice_records_usage_per_key ... ok
+test rate_limit_rejects_excess_requests ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+

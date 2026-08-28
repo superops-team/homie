@@ -264,15 +264,7 @@ fn start_gateway() -> Option<homie_engine::inject::GatewayIssuer> {
             return None;
         }
     };
-    let _ = std_listener.set_nonblocking(true);
-    let listener = match tokio::net::TcpListener::from_std(std_listener) {
-        Ok(listener) => listener,
-        Err(error) => {
-            eprintln!("homied-rs: LLM gateway listener init failed: {error}");
-            return None;
-        }
-    };
-
+    let gateway_listen = config.listen;
     let _ = std::thread::Builder::new()
         .name("homied-gateway".into())
         .spawn(move || {
@@ -288,7 +280,18 @@ fn start_gateway() -> Option<homie_engine::inject::GatewayIssuer> {
                 }
             };
             runtime.block_on(async move {
-                eprintln!("homied-rs: LLM gateway listening on {}", config.listen);
+                // `from_std` registers the listener with the Tokio reactor, so
+                // it must run inside this runtime. Calling it on the (reactor-
+                // less) main thread panics with "there is no reactor running".
+                let _ = std_listener.set_nonblocking(true);
+                let listener = match tokio::net::TcpListener::from_std(std_listener) {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        eprintln!("homied-rs: LLM gateway listener init failed: {error}");
+                        return;
+                    }
+                };
+                eprintln!("homied-rs: LLM gateway listening on {}", gateway_listen);
                 let app = homie_gateway::routes::router(state);
                 let _ = axum::serve(listener, app).await;
             });
